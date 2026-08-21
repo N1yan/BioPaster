@@ -1,0 +1,13 @@
+# Requires: Python >= 3.12
+# core dependencies
+anthropic==0.97.0
+python-dotenv==1.2.2
+
+
+requests==2.34.2
+ddgs==9.14.4
+bs4==4.15.0
+markdownify==1.2.3
+playwright==1.62.0
+Pillow==12.3.0
+pypdfium2==5.13.0

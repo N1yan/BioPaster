@@ -1,0 +1,4 @@
+方案与计划/
+__pycache__/
+*.pyc
+.pytest_cache
