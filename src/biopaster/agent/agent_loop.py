@@ -25,12 +25,16 @@ PROMPT_SECTIONS = {
                  "tasks. Whenever an error or warning occurs, you must provide the exact error/warning message verbatim"),
     "tools": "Available tools:",
     "language": "You should use the language of the user's question to respond.",
+    "reminder": ("When working with tool results, write down any important information you might need later in your response, "
+                "as the original tool result may becleared later. When the context window is nearly full, older messages will be "
+                "automatically summarized so you can continue working."),
     "memory": "Relevant memories are injected below when available."
 }
 
 def assemble_system_prompt(context: ToolContext) -> str:
     sections = [PROMPT_SECTIONS["identity"],
-                PROMPT_SECTIONS["language"]]
+                PROMPT_SECTIONS["language"],
+                PROMPT_SECTIONS["reminder"]]
     # sections.append(f"Current time: {datetime.now().isoformat(timespec='seconds')}")
     sections.append("Skills catalog:\n" + "")
     # if context["memories"]:
@@ -170,8 +174,8 @@ def agent_loop(
         
         # compact messages
         conversation.messages = micro_compact_messages(conversation.messages, 
-                                                       keep_recent=2, 
-                                                       cache_ttl_minutes=1)
+                                                       keep_recent=5, 
+                                                       cache_ttl_minutes=60)
         compacted_result = auto_compact_messages(
             messages=conversation.messages,
             provider=provider,
