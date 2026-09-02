@@ -1,3 +1,4 @@
+import re
 from ..registry import ToolSpec
 from ..protocol import ToolResult
 from ..context import ToolContext
@@ -99,7 +100,47 @@ def _save_cell(
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
-            
+
+CONTENT_HEADER = f"#{'-'*20}Copied Content{'-'*20}"
+ANNOTATION_HEADER = f"#{'-'*20}Annotation{'-'*20}"
+
+BLOCK_PATTERN = re.compile(
+    rf"^{re.escape(ANNOTATION_HEADER)}[ \t]*\r?\n"
+    rf"(?P<annotation>.*?)"
+    rf"^{re.escape(CONTENT_HEADER)}[ \t]*\r?\n"
+    rf"(?P<code>.*?)"
+    rf"(?=^{re.escape(ANNOTATION_HEADER)}[ \t]*\r?$|\Z)",
+    flags=re.MULTILINE | re.DOTALL,
+)
+def _script_parse(script_path: Path) -> str:
+    content = script_path.read_text(encoding="utf-8")
+    blocks: list[tuple[str, str]] = []
+
+    for match in BLOCK_PATTERN.finditer(content):
+        annotation = match.group("annotation").strip()
+        code = match.group("code").strip()
+        blocks.append((annotation, code))
+
+    if not blocks:
+        return content
+
+    merged: list[tuple[str, str]] = []
+
+    for annotation, code in blocks:
+        if merged and merged[-1][0] == annotation:
+            previous_annotation, previous_code = merged[-1]
+            merged[-1] = (
+                previous_annotation,
+                previous_code + "\n\n" + code,
+            )
+        else:
+            merged.append((annotation, code))
+
+    return "\n\n".join(
+        f"{annotation}\n{code}" if annotation else code
+        for annotation, code in merged
+    )
+
 DEFAULT_KERNELS = {
     "python": "python3",
     "python3": "python3",
@@ -118,11 +159,19 @@ class ExecuteCodeTool:
                 "type": "object",
                 "properties": {
                     "command": {"type": "string"},
+                    "script_path": {"type": "string",
+                                    "description": "Path to the script file to execute, but can only use for files whose name starts with: BioPaster_evidence_."
+                                    },
                     "cwd": {"type": "string"},
                     "timeout_s": {"type": "integer", "default": 60},
                     "language": {"type": "string"},
                 },
-                "required": ["command", "language"],
+                "oneOf": [
+                    {"required": ["command", "language"],
+                     "not": {"required": ["script_path"]}},
+                    {"required": ["script_path", "language"],
+                     "not": {"required": ["command"]}},
+                ]
             },
             is_destructive=True,
             max_result_size_chars=20_000,
@@ -131,20 +180,30 @@ class ExecuteCodeTool:
     def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
         
         command = tool_input.get("command", "").strip()
+        script_path = tool_input.get("script_path", "").strip()
         cwd = tool_input.get("cwd", None)
         timeout_s = tool_input.get("timeout_s", 60)
         language = tool_input.get("language", "")
         notebook_path = context.notebook_path
         
-        if not command:
+        if bool(command) == bool(script_path):
             return ToolResult(
-                name="executeCode",
-                output=[{
-                    "type": "text",
-                    "content": "[error] command is empty",
-                }],
+                name=self.name,
+                output="Exactly one of 'command' or 'script_path' must be provided.",
                 is_error=True,
             )
+        if script_path:
+            script_path = context.ensure_allowed_path(script_path)
+            if not script_path.exists():
+                return ToolResult(
+                    name="executeCode",
+                    output=[{
+                        "type": "text",
+                        "content": f"[error] script_path does not exist: {script_path}",
+                    }],
+                    is_error=True,
+                )
+            command = _script_parse(script_path)
             
         if not language:
             return ToolResult(

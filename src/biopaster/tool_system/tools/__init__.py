@@ -9,6 +9,7 @@ from .glob import GlobTool
 from .write import WriteTool
 from .edit import EditTool
 from .executeCode import ExecuteCodeTool
+from .bash import BashTool
 
 __all__ = [
     "WebSearchTool",
@@ -21,5 +22,6 @@ __all__ = [
     "GlobTool",
     "WriteTool",
     "EditTool",
-    "ExecuteCodeTool"
+    "ExecuteCodeTool",
+    "BashTool",
 ]

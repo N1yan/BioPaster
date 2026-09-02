@@ -9,7 +9,8 @@ from .tools import (
     GlobTool,
     WriteTool,
     EditTool,
-    ExecuteCodeTool
+    ExecuteCodeTool,
+    BashTool,
 )
 from .registry import ToolRegistry
 
@@ -26,7 +27,8 @@ def build_default_registry() -> ToolRegistry:
             GlobTool(),
             WriteTool(),
             EditTool(),
-            ExecuteCodeTool()
+            ExecuteCodeTool(),
+            BashTool(),
         ]
     )
     return registry

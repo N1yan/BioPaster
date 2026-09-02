@@ -114,15 +114,15 @@ class CopyPasteTool:
                 }],
                 is_error=True,
             )
-        if target_path.exists():
-            return ToolResult(
-                name="copyPaste",
-                output=[{
-                    "type": "text",
-                    "content": f"[error] Target file already exists: {target_path}",
-                }],
-                is_error=True,
-            )
+        # if target_path.exists():
+        #     return ToolResult(
+        #         name="copyPaste",
+        #         output=[{
+        #             "type": "text",
+        #             "content": f"[error] Target file already exists: {target_path}",
+        #         }],
+        #         is_error=True,
+        #     )
             
         if not target_path.name.startswith("BioPaster_evidence_"):
             return ToolResult(
@@ -183,7 +183,10 @@ class CopyPasteTool:
         annotation += f"# DOI: {metadata.get('doi')}\n" if metadata.get("doi", "") else ""
         annotation += f"# PMID: {metadata.get('pmid')}\n" if metadata.get("pmid", "") else ""
         
-        target_path.write_text(annotation + copied, encoding="utf-8")
+        # target_path.write_text(annotation + copied, encoding="utf-8")
+        with target_path.open("a", encoding="utf-8") as f:
+            f.write(annotation + copied)
+        
         print("\033[33m[copyPasteTool]\033[0m")
         return ToolResult(
             name="copyPaste",
