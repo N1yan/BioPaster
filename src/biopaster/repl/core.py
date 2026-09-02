@@ -30,6 +30,8 @@ class BioPasterREPL:
             api_key=config["api_key"],  
             base_url=config.get("base_url"),  
             model=config.get("default_model"),  
+            context_window=config.get("context_window", 128000),  
+            max_output_tokens=config.get("max_output_tokens")
         )  
         self.tool_registry = build_default_registry()  
         self.tool_context = ToolContext(

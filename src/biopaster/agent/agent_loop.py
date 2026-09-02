@@ -10,6 +10,11 @@ from ..tool_system.protocol import ToolResult, ToolCall
 from ..tool_system.persist import Persist
 from pathlib import Path
 from ..tool_system.map_result import map_tool_result
+from ..compact.micro_compact import micro_compact_messages
+from ..compact.auto_compact import (
+    auto_compact_messages,
+    AutoCompactState,
+)
 
 # ── System Prompt ──
 PROMPT_SECTIONS = {
@@ -152,12 +157,34 @@ def agent_loop(
         
     last_user_visible_message: str | None = None
     
+    # ── content compact ──
+    auto_compact_state = AutoCompactState(
+        consecutive_failures=0
+    )
+    
     total_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
     turn_count = 0
     for turn in range(max_turns):
-        api_messages = conversation.get_messages()
         call_kwargs: dict[str, Any] = {"tools": tool_schemas}
         call_kwargs["system"] = system_prompt
+        
+        # compact messages
+        conversation.messages = micro_compact_messages(conversation.messages, 
+                                                       keep_recent=2, 
+                                                       cache_ttl_minutes=1)
+        compacted_result = auto_compact_messages(
+            messages=conversation.messages,
+            provider=provider,
+            context_window=provider.context_window,
+            model_max_output_tokens= call_kwargs.get("max_tokens", 4096),
+            state=auto_compact_state,
+            **{"tool_schemas": tool_schemas, "system": system_prompt}
+        )
+        
+        conversation.messages = compacted_result.messages
+             
+        api_messages = conversation.get_messages()
+
          
         response, streamed_live_text = _call_provider_for_turn(
             provider=provider,

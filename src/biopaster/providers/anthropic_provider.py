@@ -3,11 +3,18 @@ from anthropic import Anthropic
 from .base import ChatResponse, prepare_messages
 
 class AnthropicProvider:
-    def __init__(self, api_key: str, base_url: str, model: str):
+    def __init__(self, 
+                 api_key: str, 
+                 base_url: str, 
+                 model: str, 
+                 context_window: int = 128000, 
+                 max_output_tokens: int = 8192):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
         self.client = None
+        self.context_window = context_window
+        self.max_output_tokens = max_output_tokens
 
     def _ensure_client(self):
         if self.client is None:
