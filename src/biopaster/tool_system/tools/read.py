@@ -763,14 +763,13 @@ class ReadTool:
                 is_error=True
             )
         
-        print("\033[33m[ReadTool]\033[0m")
         suffix = file_path.suffix.lower()
         
         if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
             read_result = _read_image(file_path)
-        if suffix == ".pdf":
+        elif suffix == ".pdf":
             read_result = _read_pdf(file_path, pages=pages, mode=mode)
-        if suffix == ".ipynb":
+        elif suffix == ".ipynb":
             read_result = _read_notebook(file_path, offset=offset, limit=limit)
         else:
             read_result = _read_text(file_path, offset=offset, limit=limit)

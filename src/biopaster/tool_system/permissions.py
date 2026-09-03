@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from .errors import ToolPermissionError
-from typing import Iterable
+from typing import Callable
 
 
 def _is_within(child: Path, parent: Path) -> bool:
@@ -14,30 +14,31 @@ def _is_within(child: Path, parent: Path) -> bool:
 def _resolve_path(p: str | Path) -> Path:
     return Path(p).expanduser().resolve()
 
-def _ask_permission(message: str) -> bool:
-    msg_highlighted = f"\033[33m{message}\033[0m"
-    prompt_highlighted = f"\033[96mAllow: (y/n): \033[0m"
-    response = input(f"{msg_highlighted}\n{prompt_highlighted}").strip().lower()
-    return response in {"y", "yes"}
+# def _ask_permission(message: str) -> bool:
+#     msg_highlighted = f"\033[33m{message}\033[0m"
+#     prompt_highlighted = f"\033[96mAllow: (y/n): \033[0m"
+#     response = input(f"{msg_highlighted}\n{prompt_highlighted}").strip().lower()
+#     return response in {"y", "yes"}
 
 @dataclass
 class ToolPermissionContext:
     workspace_root: Path | None = None
     additional_working_directories: tuple[Path, ...] = ()
+    permission_handler: Callable[[str], bool] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     
-    @classmethod
-    def from_iterables(
-        cls,
-        workspace_root: str | Path | None = None,
-        additional_working_directories: Iterable[str | Path] | None = None
-        ) -> "ToolPermissionContext":
-        return cls(
-             workspace_root = _resolve_path(workspace_root) if workspace_root else None,
-             additional_working_directories=tuple(
-                _resolve_path(p) for p in (additional_working_directories or [])
-            )
+    def __post_init__(self) -> None:
+        if self.workspace_root is not None:
+            self.workspace_root = _resolve_path(self.workspace_root)
+
+        self.additional_working_directories = tuple(
+            _resolve_path(path)
+            for path in self.additional_working_directories
         )
-    
+
     def allowed_path(self) -> tuple[Path, ...]:
         roots: list[Path] = []
         if self.workspace_root:
@@ -114,8 +115,10 @@ class ToolPermissionContext:
         for pattern in POTENTIALLY_DANGEROUS_PATTERNS + LANGUAGE_INJECTION_PATTERNS:
             if pattern.search(command):
                 message = (
-                    f"{command}\n will be executed. Are you sure you want to proceed?"
+                    f"{command}\nwill be executed. Are you sure you want to proceed ?"
                 )
-                response = _ask_permission(message)
+                # response = _ask_permission(message)
+                response = self.permission_handler(message)
+
                 if not response:
                     raise ToolPermissionError(f"Command execution aborted by user: {command}")

@@ -522,7 +522,7 @@ class PaperFetchTool:
             arxiv_id=tool_input.get("arxiv_id"),
             max_chars=int(tool_input.get("max_chars") or 50_000),
         )
-        print("\033[33m[paperFetchTool]\033[0m")
+
         return ToolResult(
             name="paperFetch",
             output=payload,

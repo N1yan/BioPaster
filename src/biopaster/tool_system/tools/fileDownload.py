@@ -175,7 +175,7 @@ class FileDownloadTool:
             save_dir=tool_input.get("save_dir"),
             filename=tool_input.get("filename"),
         )
-        print("\033[33m[fileDownloadTool]\033[0m")
+
         return ToolResult(
             name="fileDownload",
             output=payload,

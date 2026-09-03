@@ -1,8 +1,10 @@
 import sys
 
 def start_repl():
-    from .repl.core import BioPasterREPL
-    repl = BioPasterREPL()
+    # from .repl.core import BioPasterREPL
+    # repl = BioPasterREPL()
+    from .repl.core import BioPasterStreamingREPL
+    repl = BioPasterStreamingREPL()
     repl.run()
     return 0
 

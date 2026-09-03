@@ -172,7 +172,6 @@ class CopyPasteTool:
         copied = f"#{"-"*20}Copied Content{"-"*20}\n"
         copied += source_content[start_index:end_index] + "\n\n"
         
-        print(metadata)
         annotation = f"#{"-"*20}Annotation{"-"*20}\n"
         annotation += f"# URL: {metadata.get('url')}\n" if metadata.get("url", "") else ""
         annotation += f"# Local File: {source_path.name}\n" if source_path.suffix.lower() == ".pdf" else ""
@@ -187,7 +186,6 @@ class CopyPasteTool:
         with target_path.open("a", encoding="utf-8") as f:
             f.write(annotation + copied)
         
-        print("\033[33m[copyPasteTool]\033[0m")
         return ToolResult(
             name="copyPaste",
             output=[{"type": "text", "content": copied, "metadata": metadata}],

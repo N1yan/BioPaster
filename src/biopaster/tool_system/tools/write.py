@@ -48,7 +48,7 @@ class WriteTool:
             )
        
         path.write_text(content, encoding="utf-8")
-        print("\033[33m[WriteTool]\033[0m")
+
         return ToolResult(
             name="Write",
             output= [{

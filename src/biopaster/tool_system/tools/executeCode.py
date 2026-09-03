@@ -188,10 +188,17 @@ class ExecuteCodeTool:
         
         if bool(command) == bool(script_path):
             return ToolResult(
-                name=self.name,
-                output="Exactly one of 'command' or 'script_path' must be provided.",
+                name="executeCode",
+                output=[{
+                    "type": "text",
+                    "content": (
+                        "[error] exactly one of 'command' or "
+                        "'script_path' must be provided"
+                    ),
+                }],
                 is_error=True,
             )
+            
         if script_path:
             script_path = context.ensure_allowed_path(script_path)
             if not script_path.exists():
@@ -272,7 +279,7 @@ class ExecuteCodeTool:
             "type": "text",
             "content": f"Executed successfully, and it was saved to: {notebook_path}",
             })
-            print("\033[33m[ExecuteCodeTool]\033[0m")
+
             return ToolResult(
                 name="executeCode",
                 output=tool_outputs,

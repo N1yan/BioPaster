@@ -86,7 +86,6 @@ class WebSearchTool:
         if not results:
             results = _search_web_duckduckgo(query, num_results)
 
-        print("\033[33m[webSearchTool]\033[0m")
         return ToolResult(
             name="webSearch",
             output=[{

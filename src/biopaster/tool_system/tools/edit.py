@@ -81,7 +81,7 @@ class EditTool:
                 lineterm="",
             )
         )
-        print("\033[33m[EditTool]\033[0m")
+
         return ToolResult(
             name="Edit",
             output=[{

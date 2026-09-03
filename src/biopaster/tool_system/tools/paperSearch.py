@@ -726,7 +726,7 @@ class PaperSearchTool:
             year_limit=tool_input.get("year_limit"),
             get_pdf_url=bool(tool_input.get("get_pdf_url") or False),
         )
-        print("\033[33m[paperSearchTool]\033[0m")
+
         return ToolResult(
             name="paperSearch",
             output=payload,

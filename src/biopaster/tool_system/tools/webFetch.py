@@ -153,7 +153,7 @@ class WebFetchTool:
             content = asyncio.run(_extract_url_content_playwright(url))
         else:
             content = "[error] only http or playwright methods are allowed"
-        print("\033[33m[webFetchTool]\033[0m")
+
         return ToolResult(
             name="webFetch",
             output=[{

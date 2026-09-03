@@ -23,10 +23,7 @@ class ToolContext:
       else:
             self.cwd = Path(self.cwd).resolve()
       if self.permission_context.workspace_root is None:
-         self.permission_context = ToolPermissionContext.from_iterables(
-             workspace_root=self.workspace_root,
-             additional_working_directories=self.permission_context.additional_working_directories,
-         )
+         self.permission_context.workspace_root = self.workspace_root
          
    def mark_file_read(self, path: Path):
       stat = path.stat()
