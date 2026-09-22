@@ -5,6 +5,8 @@ from ..protocol import ToolResult
 from ..registry import ToolSpec
 from ..tools.papers.pdf_metadata import extract_pdf_reference_info
 from ..context import ToolContext
+from ..errors import ToolInputError
+from ..permissions import PermissionRequest, PermissionRule, PermissionTarget
 
 import json
 import re
@@ -83,58 +85,41 @@ class CopyPasteTool:
             },
         )
 
+    def prepare_input(self, tool_input: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+        unknown = set(tool_input) - {"source_file", "target_file", "start_string", "end_string", "usage"}
+        if unknown:
+            raise ToolInputError(f"Unknown parameters: {', '.join(sorted(unknown))}")
+        for key in ("source_file", "target_file", "start_string", "end_string", "usage"):
+            if not isinstance(tool_input.get(key), str) or not tool_input[key]:
+                raise ToolInputError(f"{key} must be a non-empty string")
+        source_paths = context.resolve_permission_paths(tool_input["source_file"])
+        target_paths = context.resolve_permission_paths(tool_input["target_file"])
+        if not source_paths[-1].is_file():
+            raise ToolInputError(f"Source is not a regular file: {source_paths[-1]}")
+        if any(not p.name.startswith("BioPaster_evidence_") for p in target_paths):
+            raise ToolInputError("Evidence target names must start with BioPaster_evidence_.")
+        if source_paths[-1] == target_paths[-1]:
+            raise ToolInputError("Source and target must be different files.")
+        if not target_paths[-1].parent.is_dir():
+            raise ToolInputError("Target parent directory does not exist.")
+        return {**tool_input, "source_file": str(source_paths[-1]),
+                "target_file": str(target_paths[-1]),
+                "_source_paths": source_paths, "_target_paths": target_paths}
+
+    def check_permissions(self, tool_input, context):
+        targets = tuple(PermissionTarget("Read", str(p)) for p in tool_input["_source_paths"])
+        targets += tuple(PermissionTarget("Edit", str(p)) for p in tool_input["_target_paths"])
+        return PermissionRequest(
+            self.spec().name, None,
+            f"Copy from {tool_input['source_file']} to {tool_input['target_file']}.",
+            targets, tuple(PermissionRule(t.tool_name, t.rule_content) for t in targets),
+        )
+
     def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
-        source_file = tool_input.get("source_file")
-        target_file = tool_input.get("target_file")
-        start_string = tool_input.get("start_string")
-        end_string = tool_input.get("end_string")
-        usage = tool_input.get("usage")
-
-        fields = ["source_file", "target_file", "start_string", "end_string", "usage"]
-        values = [source_file, target_file, start_string, end_string, usage]
-        missing_fields = [field for field, value in zip(fields, values) if value is None]
-        if missing_fields:
-            return ToolResult(
-                name="copyPaste",
-                output=[{
-                    "type": "text",
-                    "content": f"[error] Missing required fields: {', '.join(missing_fields)}",
-                }],
-                is_error=True,
-            )
-
-        source_path = Path(source_file)
-        target_path = Path(target_file)
-        if not source_path.exists():
-            return ToolResult(
-                name="copyPaste",
-                output=[{
-                    "type": "text",
-                    "content": f"[error] Source file not found: {source_path}",
-                }],
-                is_error=True,
-            )
-        # if target_path.exists():
-        #     return ToolResult(
-        #         name="copyPaste",
-        #         output=[{
-        #             "type": "text",
-        #             "content": f"[error] Target file already exists: {target_path}",
-        #         }],
-        #         is_error=True,
-        #     )
-            
-        if not target_path.name.startswith("BioPaster_evidence_"):
-            return ToolResult(
-                name="copyPaste",
-                output=[{
-                    "type": "text",
-                    "content": f"[error] Target file name does not start with: BioPaster_evidence_ ",
-                }],
-                is_error=True,
-            )
-            
-        target_path = context.ensure_allowed_path(target_path)
+        source_path = Path(tool_input["source_file"])
+        target_path = Path(tool_input["target_file"])
+        start_string = tool_input["start_string"]
+        end_string = tool_input["end_string"]
 
         tool_result_pattern = re.compile(r"BioPaster_(?:webfetch|paperfetch)_.*\.json$")
         if source_path.suffix.lower() == ".pdf":
@@ -169,6 +154,8 @@ class CopyPasteTool:
 
         start_index = start_indexes[0]
         end_index = end_indexes[0] + len(end_string)
+        if end_indexes[0] < start_index:
+            raise ToolInputError("end_string occurs before start_string")
         copied = f"#{"-"*20}Copied Content{"-"*20}\n"
         copied += source_content[start_index:end_index] + "\n\n"
         

@@ -2,6 +2,8 @@ import re
 from ..registry import ToolSpec
 from ..protocol import ToolResult
 from ..context import ToolContext
+from ..errors import ToolInputError, ToolPermissionError
+from ..permissions import PermissionRequest, PermissionRule, PermissionTarget
 from typing import Any
 from pathlib import Path
 import tempfile
@@ -177,82 +179,78 @@ class ExecuteCodeTool:
             max_result_size_chars=20_000,
         )
         
-    def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
-        
-        command = tool_input.get("command", "").strip()
-        script_path = tool_input.get("script_path", "").strip()
-        cwd = tool_input.get("cwd", None)
-        timeout_s = tool_input.get("timeout_s", 60)
-        language = tool_input.get("language", "")
-        notebook_path = context.notebook_path
-        
-        if bool(command) == bool(script_path):
-            return ToolResult(
-                name="executeCode",
-                output=[{
-                    "type": "text",
-                    "content": (
-                        "[error] exactly one of 'command' or "
-                        "'script_path' must be provided"
-                    ),
-                }],
-                is_error=True,
-            )
-            
-        if script_path:
-            script_path = context.ensure_allowed_path(script_path)
-            if not script_path.exists():
-                return ToolResult(
-                    name="executeCode",
-                    output=[{
-                        "type": "text",
-                        "content": f"[error] script_path does not exist: {script_path}",
-                    }],
-                    is_error=True,
-                )
-            command = _script_parse(script_path)
-            
-        if not language:
-            return ToolResult(
-                name="executeCode",
-                output=[{
-                    "type": "text",
-                    "content": "[error] language is not specified",
-                }],
-                is_error=True,
-            )
-        
-        if context.kernels.get(language.lower()):
-            kernel_name = context.kernels[language.lower()]
-        else:
-            kernel_name = DEFAULT_KERNELS.get(language.lower())
-            if not kernel_name:
-                return ToolResult(
-                    name="executeCode",
-                    output=[{
-                        "type": "text",
-                        "content": f"[error] unsupported language: {language}",
-                    }],
-                    is_error=True,
-                )
-            
+    def prepare_input(self, tool_input: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+        unknown = set(tool_input) - {"language", "command", "script_path", "cwd", "timeout_s"}
+        if unknown:
+            raise ToolInputError(f"Unknown parameters: {', '.join(sorted(unknown))}")
+        if ("command" in tool_input) == ("script_path" in tool_input):
+            raise ToolInputError("Provide exactly one of command or script_path.")
+        if not isinstance(tool_input.get("language"), str) or not tool_input["language"]:
+            raise ToolInputError("language must be a non-empty string")
+        for key in ("command", "script_path", "cwd"):
+            if key in tool_input and (not isinstance(tool_input[key], str) or not tool_input[key].strip()):
+                raise ToolInputError(f"{key} must be a non-empty string")
+        language = tool_input["language"].lower()
+        kernel = context.kernels.get(language) or DEFAULT_KERNELS.get(language)
+        if not kernel:
+            raise ToolInputError(f"Unsupported language: {language}")
+        timeout = tool_input.get("timeout_s", 60)
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
+            raise ToolInputError("timeout_s must be a positive integer")
         if context.notebook_path is None:
-            return ToolResult(
-                name="executeCode",
-                output=[{
-                    "type": "text",
-                    "content": "[error] notebook_path is not configured",
-                }],
-                is_error=True,
-            )
+            raise ToolInputError("notebook_path is not configured")
+        cwd_paths = context.resolve_permission_paths(tool_input.get("cwd") or context.cwd)
+        if not cwd_paths[-1].is_dir():
+            raise ToolInputError(f"cwd is not a directory: {cwd_paths[-1]}")
+        notebook_paths = context.resolve_permission_paths(context.notebook_path)
+        if any(p.name.startswith("BioPaster_evidence_") for p in notebook_paths):
+            raise ToolPermissionError("Notebook output cannot overwrite evidence files.")
+        notebook_targets = tuple(PermissionTarget("Edit", str(p)) for p in notebook_paths)
+        notebook_path = notebook_paths[-1]
+        command = tool_input.get("command")
+        if "script_path" in tool_input:
+            script = tool_input["script_path"]
+            if not script.strip():
+                raise ToolInputError("script_path cannot be empty")
+            paths = context.resolve_permission_paths(script)
+            if not paths[-1].is_file():
+                raise ToolInputError(f"Script is not a regular file: {paths[-1]}")
+            # Reading and executing are separate approvals. Read exactly once.
+            context.permission_context.authorize(PermissionRequest(
+                self.spec().name, context.active_tool_use_id, f"Read script: {paths[-1]}",
+                tuple(PermissionTarget("Read", str(p)) for p in paths),
+                tuple(PermissionRule("Read", str(p)) for p in paths),
+            ))
+            command = _script_parse(paths[-1])
+        if not isinstance(command, str) or not command.strip():
+            raise ToolInputError("Code cannot be empty")
+        context.permission_context.check_command_restrictions(command)
+        return {"command": command, "language": language, "kernel_name": kernel,
+                "timeout_s": timeout, "cwd": str(cwd_paths[-1]),
+                "notebook_path": str(notebook_path), "_cwd_paths": cwd_paths,
+                "_notebook_targets": notebook_targets}
 
-        notebook_path = context.ensure_allowed_path(context.notebook_path)
-        
-        cwd = cwd or context.cwd
-        if cwd is not None:
-            cwd = context.ensure_allowed_path(cwd)
-        
-        context.execute_permission_check(command)
+    def check_permissions(self, tool_input, context):
+        name = self.spec().name
+        targets = (PermissionTarget(name, None),)
+        targets += tuple(PermissionTarget("Read", str(p)) for p in tool_input["_cwd_paths"])
+        targets += tool_input["_notebook_targets"]
+        return PermissionRequest(
+            name, None,
+            f"Language: {tool_input['language']}\n"
+            f"Working directory: {tool_input['cwd']}\n"
+            f"Notebook: {tool_input['notebook_path']}\n"
+            f"Code:\n{tool_input['command']}",
+            targets, (PermissionRule(name),),
+        )
+
+    def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
+        command = tool_input["command"]
+        timeout_s = tool_input["timeout_s"]
+        kernel_name = tool_input["kernel_name"]
+        cwd = tool_input["cwd"]
+        notebook_path = Path(tool_input["notebook_path"])
+
         notebook = _run_notebook_cell(
             code=command,
             timeout=timeout_s,

@@ -21,6 +21,10 @@ from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.defaults import build_default_registry
 
 from biopaster.agent.session_log import SessionLog
+from biopaster.tool_system.permissions import (
+    PermissionRequest,
+    PermissionAnswer,
+)
 
 
 def build_prompt_session(commands: list[str]) -> PromptSession:
@@ -100,6 +104,7 @@ class BioPasterStreamingREPL:
         self.commands = [
             "/help",
             "/multiline",
+            "/permissions",
             "/exit",
             "/quit",
         ]
@@ -132,6 +137,7 @@ class BioPasterStreamingREPL:
             self._ask_permission
         )
         self.tool_context.session_log = self.session_log
+        self.tool_context.permission_context.session_log = self.session_log
 
     def _handle_command(self, command: str) -> bool:
         if command == "/help":
@@ -160,27 +166,152 @@ class BioPasterStreamingREPL:
                     "[dim]Use Esc+Enter to submit multiline input.[/dim]"
                 )
             return True
-
+        
+        if command == "/permissions":
+            self._show_permissions()
+            return True
+                
         return False
 
-    def _ask_permission(self, message: str) -> bool:
+    def _ask_permission(
+        self,
+        request: PermissionRequest,
+    ) -> PermissionAnswer:
         if self._current_status is not None:
-            try:
-                self._current_status.stop()
-            except Exception:
-                pass
+            self._current_status.stop()
 
         self.console.print()
         self.console.print(
-            "[bold yellow]Permission required[/bold yellow]"
+            Text("Permission required", style="bold yellow")
         )
-        self.console.print(message)
+        self.console.print(
+            f"Tool: {request.tool_name}",
+            markup=False,
+        )
+        self.console.print(request.description, markup=False)
 
-        answer = self.prompt_session.prompt(
-            "Allow? [y/N] "
-        ).strip().lower()
+        self.console.print("\nTargets:")
+        for target in request.targets:
+            content = (
+                target.rule_content
+                if target.rule_content is not None
+                else "entire tool"
+            )
+            self.console.print(
+                f"- {target.tool_name}: {content}",
+                markup=False,
+            )
 
-        return answer in {"y", "yes"}
+        self.console.print("\n1. Allow once")
+
+        for index, rule in enumerate(request.suggestions, start=2):
+            scope = (
+                "entire tool"
+                if rule.rule_content is None
+                else repr(rule.rule_content)
+            )
+            self.console.print(
+                f"{index}. Allow once and remember for this session: "
+                f"{rule.tool_name} ({scope})",
+                markup=False,
+            )
+
+        self.console.print("0. Deny")
+
+        while True:
+            answer = self.prompt_session.prompt(
+                "Choose (default: 0): "
+            ).strip()
+
+            if answer in {"", "0"}:
+                return PermissionAnswer(allowed=False)
+
+            if answer == "1":
+                return PermissionAnswer(allowed=True)
+
+            try:
+                index = int(answer) - 2
+            except ValueError:
+                self.console.print("Please enter a listed number.")
+                continue
+
+            if not 0 <= index < len(request.suggestions):
+                self.console.print("Please enter a listed number.")
+                continue
+
+            return PermissionAnswer(
+                allowed=True,
+                rules=(request.suggestions[index],),
+            )
+        
+    def _show_permissions(self) -> None:
+        permissions = self.tool_context.permission_context
+
+        while True:
+            rules = list(permissions.session_rules)
+
+            self.console.print(
+                Text("Session permission rules", style="bold cyan")
+            )
+
+            if not rules:
+                self.console.print("No session permission rules.")
+                return
+
+            for index, rule in enumerate(rules, start=1):
+                scope = (
+                    "entire tool"
+                    if rule.rule_content is None
+                    else repr(rule.rule_content)
+                )
+
+                self.console.print(
+                    f"{index}. {rule.behavior.upper()} "
+                    f"{rule.tool_name} ({scope}) "
+                    f"[source: {rule.source}]",
+                    markup=False,
+                )
+
+            self.console.print(
+                "Enter a number to remove one rule, "
+                "'all' to remove all rules, or press Enter to return."
+            )
+
+            try:
+                answer = self.prompt_session.prompt("Remove: ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                self.console.print()
+                return
+
+            if not answer:
+                return
+
+            if answer == "all":
+                permissions.clear_session_rules()
+                self.console.print(
+                    Text(
+                        "All session rules removed, including "
+                        "allow, ask, and deny rules.",
+                        style="yellow",
+                    )
+                )
+                return
+
+            try:
+                index = int(answer)
+            except ValueError:
+                self.console.print("Please enter a listed number or 'all'.")
+                continue
+
+            if not 1 <= index <= len(rules):
+                self.console.print("Number out of range.")
+                continue
+
+            permissions.remove_rule(rules[index - 1])
+
+            self.console.print(
+                Text("Selected permission rule removed.", style="yellow")
+            )
 
     def _print_startup_header(self) -> None:
         information = Table.grid(padding=(0, 1))
@@ -360,4 +491,3 @@ class BioPasterStreamingREPL:
 
             self.chat(user_input)
             self.multiline_mode = False
-

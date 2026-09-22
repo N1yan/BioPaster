@@ -244,7 +244,7 @@ def agent_loop(
             )
         
         # Call each tool
-        for tool_use in tool_uses:
+        for tool_index, tool_use in enumerate(tool_uses):
             tool_name = tool_use["name"]
             tool_id = tool_use["id"]
             tool_input = tool_use["input"]
@@ -281,10 +281,38 @@ def agent_loop(
                 )
                 
                 processed_result = _process_tool_result(result, tool_id)
-                conversation.add_tool_result_message(tool_id, processed_result.output)
-            
+                conversation.add_tool_result_message(
+                    tool_use_id=tool_id,
+                    content=processed_result.output,
+                    is_error=processed_result.is_error,
+                )
+                            
+            except (KeyboardInterrupt, EOFError):
+                for pending_index in range(tool_index, len(tool_uses)):
+                    pending_tool = tool_uses[pending_index]
+
+                    if pending_index == tool_index:
+                        message = (
+                            "Tool call interrupted. Execution may be incomplete; "
+                            "verify the current state before retrying."
+                        )
+                    else:
+                        message = (
+                            "Tool call cancelled because the task was interrupted. "
+                            "This tool call was not executed."
+                        )
+
+                    conversation.add_tool_result_message(
+                        tool_use_id=pending_tool["id"],
+                        content=message,
+                        is_error=True,
+                    )
+
+                raise
+
             except Exception as e:
                 error_str = f"Error: {e}"
+
                 _safe_call_handler(
                     on_event,
                     ToolEvent(
@@ -296,8 +324,12 @@ def agent_loop(
                         error=error_str,
                     ),
                 )
-                
-                conversation.add_tool_result_message(tool_id, error_str, is_error=True)
+
+                conversation.add_tool_result_message(
+                    tool_id,
+                    error_str,
+                    is_error=True,
+                )
     
     # Reached max turns
     return finish(

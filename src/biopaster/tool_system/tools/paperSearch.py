@@ -671,6 +671,10 @@ def search_papers(
     }]
     
 
+from ..errors import ToolInputError
+from ..permissions import PermissionRequest, PermissionRule, PermissionTarget
+
+
 class PaperSearchTool:
     def spec(self) -> ToolSpec:
         return ToolSpec(
@@ -715,6 +719,43 @@ class PaperSearchTool:
             },
             is_read_only=True,
             max_result_size_chars=20_000,
+        )
+
+    def prepare_input(self, tool_input: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+        properties = self.spec().input_schema["properties"]
+        unknown = set(tool_input) - set(properties)
+        if unknown:
+            raise ToolInputError(f"Unknown parameters: {', '.join(sorted(unknown))}")
+        for key, value in tool_input.items():
+            kind = properties[key].get("type")
+            if kind == "string" and not isinstance(value, str):
+                raise ToolInputError(f"{key} must be a string")
+            if kind == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
+                raise ToolInputError(f"{key} must be an integer")
+            if kind == "boolean" and not isinstance(value, bool):
+                raise ToolInputError(f"{key} must be a boolean")
+            if kind == "array" and not isinstance(value, list):
+                raise ToolInputError(f"{key} must be a list")
+        prepared = dict(tool_input)
+        if not prepared.get("query", "").strip():
+            raise ToolInputError("query cannot be empty")
+        for key in ("num_results", "max_item", "max_chars"):
+            if key in prepared and prepared[key] < 1:
+                raise ToolInputError(f"{key} must be positive")
+        if "sources" in prepared:
+            if not all(isinstance(s, str) and s in VALID_SOURCES for s in prepared["sources"]):
+                raise ToolInputError("Invalid paper sources.")
+        if "year_limit" in prepared:
+            years = prepared["year_limit"]
+            if len(years) != 2 or not all(type(y) is int for y in years) or years[0] > years[1]:
+                raise ToolInputError("year_limit must contain a valid start and end year.")
+        return prepared
+
+    def check_permissions(self, tool_input, context):
+        name = self.spec().name
+        return PermissionRequest(
+            name, None, f"Retrieve remote content with {name}.",
+            (PermissionTarget(name, None),), (PermissionRule(name),),
         )
 
     def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:

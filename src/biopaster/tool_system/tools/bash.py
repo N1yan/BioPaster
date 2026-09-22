@@ -4,6 +4,12 @@ from typing import Any
 from ..context import ToolContext
 from ..protocol import ToolResult
 from ..registry import ToolSpec
+from ..permissions import (
+    PermissionRequest,
+    PermissionRule,
+    PermissionTarget,
+)
+from ..errors import ToolInputError
 
 
 class BashTool:
@@ -27,42 +33,103 @@ class BashTool:
             },
             is_destructive=True,
         )
-
-    def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
-        command = tool_input.get("command", "").strip()
-        if not command:
-            return ToolResult(
-                name="Bash",
-                output=[{
-                    "type": "text",
-                    "content": "[error] command cannot be empty",
-                }],
-                is_error=True,
+        
+    def prepare_input(
+        self,
+        tool_input: dict[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]:
+        unknown_fields = set(tool_input) - {
+            "command", "cwd", "timeout_s"
+        }
+        if unknown_fields:
+            raise ToolInputError(
+                f"Unknown parameters: {', '.join(sorted(unknown_fields))}"
             )
 
-        cwd = context.ensure_allowed_path(tool_input.get("cwd") or context.cwd)
-        if not cwd.is_dir():
-            return ToolResult(
-                name="Bash",
-                output=[{
-                    "type": "text",
-                    "content": f"[error] cwd is not a directory: {cwd}",
-                }],
-                is_error=True,
+        command = tool_input.get("command")
+        if not isinstance(command, str) or not command.strip():
+            raise ToolInputError(
+                "command must be a non-empty string"
+            )
+
+        cwd = tool_input.get("cwd")
+        if cwd is None:
+            cwd = str(context.cwd)
+        elif not isinstance(cwd, str) or not cwd.strip():
+            raise ToolInputError(
+                "cwd must be a non-empty string"
+            )
+
+        resolved_cwd = context.resolve_permission_paths(cwd)[-1]
+        if not resolved_cwd.is_dir():
+            raise ToolInputError(
+                f"cwd is not a directory: {resolved_cwd}"
             )
 
         timeout_s = tool_input.get("timeout_s", 60)
-        if isinstance(timeout_s, bool) or not isinstance(timeout_s, int) or timeout_s < 1:
-            return ToolResult(
-                name="Bash",
-                output=[{
-                    "type": "text",
-                    "content": "[error] timeout_s must be an integer of at least 1",
-                }],
-                is_error=True,
+        if (
+            isinstance(timeout_s, bool)
+            or not isinstance(timeout_s, int)
+            or timeout_s < 1
+        ):
+            raise ToolInputError(
+                "timeout_s must be an integer of at least 1"
             )
 
-        context.execute_permission_check(command)
+        return {
+            "command": command,
+            "cwd": cwd,
+            "timeout_s": timeout_s,
+        }
+            
+    def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: ToolContext,
+    ) -> PermissionRequest:
+        command = tool_input["command"]
+        context.permission_context.check_command_restrictions(command)
+        tool_name = self.spec().name
+
+        cwd = tool_input.get("cwd") or context.cwd
+        cwd_paths = context.resolve_permission_paths(cwd)
+
+        return PermissionRequest(
+            tool_name=tool_name,
+            tool_use_id=None,
+            description=(
+                f"Working directory: {cwd_paths[-1]}\n"
+                f"Command:\n{command}"
+            ),
+            targets=(
+                PermissionTarget(
+                    tool_name=tool_name,
+                    rule_content=command,
+                ),
+                *(
+                    PermissionTarget(
+                        tool_name="Read",
+                        rule_content=str(path),
+                    )
+                    for path in cwd_paths
+                ),
+            ),
+            suggestions=(
+                PermissionRule(
+                    tool_name=tool_name,
+                    rule_content=command,
+                ),
+                PermissionRule(
+                    tool_name=tool_name,
+                ),
+            ),
+        )
+
+    def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
+        command = tool_input["command"]
+        cwd = context.resolve_permission_paths(tool_input["cwd"])[-1]
+        timeout_s = tool_input["timeout_s"]
         try:
             completed = subprocess.run(
                 ["/bin/bash", "-lc", command],

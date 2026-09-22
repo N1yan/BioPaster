@@ -1,8 +1,9 @@
-from dataclasses import dataclass
 from typing import Any, Mapping, Iterable, Protocol
 from .protocol import ToolResult, ToolCall
 from .context import ToolContext
-
+from dataclasses import dataclass, replace
+from .errors import ToolInputError, ToolPermissionError
+from .permissions import PermissionRequest, PermissionTarget
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -18,8 +19,24 @@ class ToolSpec:
 
 class Tool(Protocol):
     def spec(self) -> ToolSpec: ...
-    def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult: ...
-    
+
+    def prepare_input(
+        self,
+        tool_input: dict[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]: ...
+
+    def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: ToolContext,
+    ) -> PermissionRequest: ...
+
+    def run(
+        self,
+        tool_input: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolResult: ...
     
 class ToolRegistry:
     def __init__(self, tools: Iterable[Tool] | None = None) -> None:
@@ -50,25 +67,91 @@ class ToolRegistry:
     
     def dispatch(self, call: ToolCall, context: ToolContext) -> ToolResult:
         tool_name = call.name
-        tool_input = call.input
-        if tool_name.lower() not in self._by_name.keys():
+
+        def error_result(message: str) -> ToolResult:
             return ToolResult(
                 name=tool_name,
-                output=[{
-                    "type": "text",
-                    "content": f"Tool {tool_name} not found",
-                }],
-                is_error=True
+                output=[{"type": "text", "content": message}],
+                is_error=True,
+                tool_use_id=call.tool_use_id,
             )
-        tool = self._by_name[tool_name.lower()]
+
+        tool = self._by_name.get(tool_name.lower())
+        if tool is None:
+            return error_result(f"Tool {tool_name} not found.")
+
+        tool_name = tool.spec().name
+        previous_tool_use_id = context.active_tool_use_id
         try:
-            return tool.run(tool_input, context)
-        except Exception as e:
-            return ToolResult(
-                name=tool_name,
-                output=[{
-                    "type": "text",
-                    "content": f"Tool {tool_name} failed: {e}"
-                }],
-                is_error=True
+            context.active_tool_use_id = call.tool_use_id
+            if not isinstance(call.input, dict):
+                raise ToolInputError("Tool input must be a dictionary.")
+
+            if not callable(getattr(tool, "prepare_input", None)):
+                raise ToolInputError(
+                    f"{tool_name} has not implemented prepare_input."
+                )
+
+            if not callable(getattr(tool, "check_permissions", None)):
+                raise ToolInputError(
+                    f"{tool_name} has not implemented check_permissions."
+                )
+
+            # Reject whole-tool bans before preparing input.
+            decision = context.permission_context.evaluate(
+                PermissionTarget(
+                    tool_name=tool_name,
+                    rule_content=None,
+                )
             )
+            if decision.behavior == "deny":
+                context.permission_context.record_permission_decision(
+                    tool_name=tool_name,
+                    tool_use_id=call.tool_use_id,
+                    outcome="denied",
+                    reason=decision.reason,
+                )
+                raise ToolPermissionError(decision.reason)
+
+            prepared_input = tool.prepare_input(call.input, context)
+            request = tool.check_permissions(prepared_input, context)
+
+            targets = request.targets
+
+            if (
+                decision.behavior == "ask"
+                and decision.matched_rule is not None
+            ):
+                tool_target = PermissionTarget(
+                    tool_name=tool_name,
+                    rule_content=None,
+                )
+                if tool_target not in targets:
+                    targets = (tool_target, *targets)
+
+            request = replace(
+                request,
+                tool_name=tool_name,
+                tool_use_id=call.tool_use_id,
+                targets=targets,
+            )
+
+            context.permission_context.authorize(request)
+
+            result = tool.run(prepared_input, context)
+            return replace(
+                result,
+                name=tool_name,
+                tool_use_id=call.tool_use_id,
+            )
+
+        except (KeyboardInterrupt, EOFError):
+            raise
+        except ToolPermissionError as exc:
+            return error_result(f"Tool {tool_name} permission denied: {exc}")
+        except ToolInputError as exc:
+            return error_result(f"Tool {tool_name} invalid input: {exc}")
+        except Exception as exc:
+            return error_result(f"Tool {tool_name} failed: {exc}")
+        finally:
+              context.active_tool_use_id = previous_tool_use_id

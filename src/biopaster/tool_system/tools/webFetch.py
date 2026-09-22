@@ -107,6 +107,10 @@ def _extract_url_content_http(url: str) -> str:
         return f"[error] {url}: {e}"
 
 
+from ..errors import ToolInputError
+from ..permissions import PermissionRequest, PermissionRule, PermissionTarget
+
+
 class WebFetchTool:
     def spec(self) -> ToolSpec:
         return ToolSpec(
@@ -129,6 +133,40 @@ class WebFetchTool:
             },
             is_read_only=True,
             max_result_size_chars=20_000,
+        )
+
+    def prepare_input(self, tool_input: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+        properties = self.spec().input_schema["properties"]
+        unknown = set(tool_input) - set(properties)
+        if unknown:
+            raise ToolInputError(f"Unknown parameters: {', '.join(sorted(unknown))}")
+        for key, value in tool_input.items():
+            kind = properties[key].get("type")
+            if kind == "string" and not isinstance(value, str):
+                raise ToolInputError(f"{key} must be a string")
+            if kind == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
+                raise ToolInputError(f"{key} must be an integer")
+            if kind == "boolean" and not isinstance(value, bool):
+                raise ToolInputError(f"{key} must be a boolean")
+            if kind == "array" and not isinstance(value, list):
+                raise ToolInputError(f"{key} must be a list")
+        prepared = dict(tool_input)
+        if not prepared.get("url", "").strip():
+            raise ToolInputError("url cannot be empty")
+        for key in ("num_results", "max_item", "max_chars"):
+            if key in prepared and prepared[key] < 1:
+                raise ToolInputError(f"{key} must be positive")
+        if not re.match(r"^https?://", prepared["url"].strip()):
+            raise ToolInputError("Only HTTP and HTTPS URLs are allowed.")
+        if prepared.get("method", "http") not in {"http", "requests", "playwright"}:
+            raise ToolInputError("Unsupported fetch method.")
+        return prepared
+
+    def check_permissions(self, tool_input, context):
+        name = self.spec().name
+        return PermissionRequest(
+            name, None, f"Retrieve remote content with {name}.",
+            (PermissionTarget(name, None),), (PermissionRule(name),),
         )
 
     def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:

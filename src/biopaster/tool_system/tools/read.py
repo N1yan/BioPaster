@@ -14,6 +14,13 @@ from ..protocol import ToolResult
 from ..registry import ToolSpec
 from ..context import ToolContext
 
+from ..errors import ToolInputError
+from ..permissions import (
+    PermissionRequest,
+    PermissionRule,
+    PermissionTarget,
+)
+
 # -----image----------------------
 IMAGE_MAX_WIDTH = 2000
 IMAGE_MAX_HEIGHT = 2000
@@ -686,96 +693,149 @@ class ReadTool:
             max_result_size_chars=20_000
         )
         
-    def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
-        file_path = tool_input.get("file_path", "")
-        if not file_path:
-            return ToolResult(
-                name="Read",
-                output=[{"type": "text", 
-                         "content": "[error] file_path is not provided",
-                         "filePath": str(file_path)}],
-                is_error=True
+    def prepare_input(
+          self,
+          tool_input: dict[str, Any],
+          context: ToolContext,
+    ) -> dict[str, Any]:
+        unknown_fields = set(tool_input) - {
+            "file_path", "offset", "limit", "pages", "mode",
+        }
+        if unknown_fields:
+            raise ToolInputError(
+                f"Unknown parameters: {', '.join(sorted(unknown_fields))}"
             )
-        file_path = Path(file_path)
-            
-        limit = tool_input.get("limit", 200)
+
+        file_path = tool_input.get("file_path")
+        if not isinstance(file_path, str) or not file_path.strip():
+            raise ToolInputError(
+                "file_path must be a non-empty string"
+            )
+
+        paths = context.resolve_permission_paths(file_path)
+
+        if any(_is_blocked_device_path(path) for path in paths):
+            raise ToolInputError("Reading this device path is not allowed.")
+
+        path = paths[-1]
+        if not path.is_file():
+            raise ToolInputError(
+                f"File does not exist or is not a regular file: {path}"
+            )
+
         offset = tool_input.get("offset", 1)
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset < 1
+        ):
+            raise ToolInputError(
+                "offset must be an integer of at least 1"
+            )
+
+        limit = tool_input.get("limit", 200)
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 2000
+        ):
+            raise ToolInputError(
+                "limit must be an integer between 1 and 2000"
+            )
+
         pages = tool_input.get("pages", "1-5")
-        mode = tool_input.get("mode", "text")
-        
-        if not file_path.exists():
-            return ToolResult(
-                name="Read",
-                output=[{"type": "text", 
-                         "content": f"[error] File not found: {file_path}",
-                         "filePath": str(file_path)}],
-                is_error=True
-            )
-        if file_path.is_dir():
-            return ToolResult(
-                name="Read",
-                output=[{"type": "text", 
-                         "content": f"[error] path is a directory: '{file_path}'",
-                         "filePath": str(file_path)}],
-                is_error=True
-            )
-        if _is_blocked_device_path(file_path):
-            return ToolResult(
-                name="Read",
-                output=[{"type": "text", 
-                         "content": f"[error] path is a blocked device: '{file_path}'",
-                         "filePath": str(file_path)}],
-                is_error=True
-            )
-            
-        if limit is not None and limit < 1:
-            return ToolResult(
-                name="Read",
-                output=[{"type": "text", 
-                         "content": "[error] limit must be greater than 0",
-                         "filePath": str(file_path)}],
-                is_error=True
-            )
-        if not isinstance(limit, int) or limit < 1 or limit > 2000:
-            return ToolResult(
-                name="Read",
-                output=[{"type": "text", 
-                         "content": "[error] limit must be between 1 and 2000",
-                         "filePath": str(file_path)}],
-                is_error=True
-            )
-            
-        if not isinstance(offset, int) or offset < 1:
-            return ToolResult(
-                name="Read",
-                output=[{"type": "text", 
-                         "content": "[error] offset must be an integer >= 1",
-                         "filePath": str(file_path)}],
-                is_error=True
-            )
-            
         if pages is not None and not isinstance(pages, str):
-            return ToolResult(
-                name="Read",
-                output=[{"type": "text", 
-                         "content": "[error] pages must be a string when provided",
-                         "filePath": str(file_path)}],
-                is_error=True
+            raise ToolInputError(
+                "pages must be a string when provided"
             )
+
+        mode = tool_input.get("mode", "text")
+        if mode not in ("text", "image"):
+            raise ToolInputError(
+                "mode must be 'text' or 'image'"
+            )
+
+        return {
+            "file_path": str(path),
+            "offset": offset,
+            "limit": limit,
+            "pages": pages,
+            "mode": mode,
+            "_permission_paths": paths,
+        }
         
+    def check_permissions(
+          self,
+          tool_input: dict[str, Any],
+          context: ToolContext,
+    ) -> PermissionRequest:
+        paths = tool_input["_permission_paths"]
+
+        return PermissionRequest(
+            tool_name=self.spec().name,
+            tool_use_id=None,
+            description=f"Read file: {tool_input['file_path']}",
+            targets=tuple(
+                PermissionTarget(
+                    tool_name="Read",
+                    rule_content=str(path),
+                )
+                for path in paths
+            ),
+            suggestions=tuple(
+                PermissionRule(
+                    tool_name="Read",
+                    rule_content=str(path),
+                )
+                for path in paths
+            ),
+        )
+    
+    def run(
+          self,
+          tool_input: dict[str, Any],
+          context: ToolContext,
+    ) -> ToolResult:
+        file_path = Path(tool_input["file_path"])
+        offset = tool_input["offset"]
+        limit = tool_input["limit"]
+        pages = tool_input["pages"]
+        mode = tool_input["mode"]
+
+        if not file_path.is_file():
+            raise ToolInputError(
+                f"File does not exist or is not a regular file: {file_path}"
+            )
+
         suffix = file_path.suffix.lower()
-        
+
         if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
             read_result = _read_image(file_path)
+
         elif suffix == ".pdf":
-            read_result = _read_pdf(file_path, pages=pages, mode=mode)
+            read_result = _read_pdf(
+                file_path,
+                pages=pages,
+                mode=mode,
+            )
+
         elif suffix == ".ipynb":
-            read_result = _read_notebook(file_path, offset=offset, limit=limit)
+            read_result = _read_notebook(
+                file_path,
+                offset=offset,
+                limit=limit,
+            )
+
         else:
-            read_result = _read_text(file_path, offset=offset, limit=limit)
+            read_result = _read_text(
+                file_path,
+                offset=offset,
+                limit=limit,
+            )
 
         if not read_result.is_error:
             context.mark_file_read(file_path)
+
         return read_result
         
     

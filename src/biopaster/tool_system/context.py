@@ -1,8 +1,13 @@
 from dataclasses import dataclass,field
 from pathlib import Path
-from typing import Any
-from .permissions import ToolPermissionContext
+from typing import Any, Literal
+from .permissions import (
+   ToolPermissionContext,
+   PermissionTarget,
+   PermissionDecision,
+)
 from ..agent.session_log import SessionLog
+import os
 
 
 @dataclass
@@ -17,6 +22,7 @@ class ToolContext:
    notebook_path: Path | None = None
    kernels: dict[str, Any] = field(default_factory=dict)
    session_log: SessionLog | None = None
+   active_tool_use_id: str | None = None
 
    def __post_init__(self):
       self.workspace_root = Path(self.workspace_root).resolve()
@@ -46,7 +52,59 @@ class ToolContext:
          p = (base / p).resolve()
       return self.permission_context.ensure_path_allowed(p)
    
-   def execute_permission_check(self, command: str):
-      self.permission_context.execute_permission_check(command)
-         
-      
+   def resolve_permission_paths(
+         self,
+         path: str | Path,
+   ) -> tuple[Path, ...]:
+      requested = Path(path).expanduser()
+
+      if not requested.is_absolute():
+            requested = self.cwd / requested
+
+      # Resolve before normalizing away "..", because a preceding
+      # directory may be a symbolic link.
+      resolved = requested.resolve()
+      absolute = Path(os.path.abspath(requested))
+
+      if absolute == resolved:
+            return (resolved,)
+
+      return (absolute, resolved)
+   
+   def check_file_permission(
+      self,
+      path: str | Path,
+      operation: Literal["read", "edit"],
+   ) -> PermissionDecision:
+      if operation not in {"read", "edit"}:
+            raise ValueError(
+               f"Unsupported file operation: {operation!r}"
+            )
+
+      tool_name = "Read" if operation == "read" else "Edit"
+      paths = self.resolve_permission_paths(path)
+
+      decisions = [
+            self.permission_context.evaluate(
+               PermissionTarget(
+                  tool_name=tool_name,
+                  rule_content=str(candidate),
+               )
+            )
+            for candidate in paths
+      ]
+
+      for behavior in ("deny", "ask"):
+            for candidate, decision in zip(paths, decisions):
+               if decision.behavior == behavior:
+                  return PermissionDecision(
+                        behavior=decision.behavior,
+                        reason=f"{candidate}: {decision.reason}",
+                        matched_rule=decision.matched_rule,
+                  )
+
+      return PermissionDecision(
+            behavior="allow",
+            reason="All file paths passed permission checks.",
+      )
+   
