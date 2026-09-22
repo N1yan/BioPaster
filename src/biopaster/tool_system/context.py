@@ -2,6 +2,7 @@ from dataclasses import dataclass,field
 from pathlib import Path
 from typing import Any
 from .permissions import ToolPermissionContext
+from ..agent.session_log import SessionLog
 
 
 @dataclass
@@ -15,6 +16,7 @@ class ToolContext:
    tools: list[str] = field(default_factory=list)
    notebook_path: Path | None = None
    kernels: dict[str, Any] = field(default_factory=dict)
+   session_log: SessionLog | None = None
 
    def __post_init__(self):
       self.workspace_root = Path(self.workspace_root).resolve()

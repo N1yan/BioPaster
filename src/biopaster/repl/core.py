@@ -20,6 +20,8 @@ from biopaster.providers import get_provider_class
 from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.defaults import build_default_registry
 
+from biopaster.agent.session_log import SessionLog
+
 
 def build_prompt_session(commands: list[str]) -> PromptSession:
     command_completer = WordCompleter(
@@ -114,6 +116,9 @@ class BioPasterStreamingREPL:
             context_window=config.get("context_window", 128_000),
             max_output_tokens=config.get("max_output_tokens"),
         )
+        
+        self.session_log = SessionLog(Path.home() / ".biopaster" / "sessions")
+        self.provider.session_log = self.session_log
 
         self.tool_registry = build_default_registry()
         self.tool_context = ToolContext(
@@ -126,6 +131,7 @@ class BioPasterStreamingREPL:
         self.tool_context.permission_context.permission_handler = (
             self._ask_permission
         )
+        self.tool_context.session_log = self.session_log
 
     def _handle_command(self, command: str) -> bool:
         if command == "/help":
@@ -234,8 +240,8 @@ class BioPasterStreamingREPL:
             renderer.append(chunk)
 
         def on_event(event: ToolEvent) -> None:
+            self.session_log.record("agent_event", event)
             _stop_status_once()
-
             # A tool line must not be inserted into a Markdown block.
             renderer.finish()
             
@@ -293,14 +299,25 @@ class BioPasterStreamingREPL:
                     on_text_chunk=on_text_chunk,
                     on_event=on_event,
                 )
-        except Exception as e:
-            renderer.finish()
-            self.console.print(f"[red]Error: {e}[/red]")
+        except (KeyboardInterrupt, EOFError) as e:
+            self.session_log.record_exception("run_interrupted", e)
+            self.session_log.end_run("interrupted")
+            self.console.print("\n[yellow]Interrupted.[/yellow]")
             return
+        except Exception as e:
+            self.session_log.record_exception("run_exception", e)
+            self.session_log.end_run("failed")
+            self.console.print(
+                Text(f"Error: {e}", style="red")
+            )
+            return
+        else:
+            self.session_log.record("agent_return", result)
+            self.session_log.end_run("returned")
         finally:
+            renderer.finish()
             self._current_status = None
-
-        renderer.finish()
+            
         self.console.print()
 
     def run(self) -> None:

@@ -1,6 +1,7 @@
 from typing import Any, Optional, Callable
 from anthropic import Anthropic
 from .base import ChatResponse, prepare_messages
+from uuid import uuid4
 
 class AnthropicProvider:
     def __init__(self, 
@@ -15,6 +16,7 @@ class AnthropicProvider:
         self.client = None
         self.context_window = context_window
         self.max_output_tokens = max_output_tokens
+        self.session_log = None
 
     def _ensure_client(self):
         if self.client is None:
@@ -55,55 +57,70 @@ class AnthropicProvider:
         messages: list,
         tools: Optional[list[dict[str, Any]]] = None,
         on_text_chunk: Callable[[str], None] | None = None,
-        **kwargs
+        **kwargs,
     ) -> ChatResponse:
-        
-        model = kwargs.get("model", self.model)
-        max_tokens = kwargs.get("max_tokens", 4096)
-        anthropic_messages = prepare_messages(messages)
-        system = kwargs.pop("system", {})
-        # Make API call
-        client = self._ensure_client()
-        
-        extra_kwargs: dict[str, Any] = {}
-        if tools:
-            extra_kwargs["tools"] = tools
-        
-        streamed_text = ""
-        with client.messages.stream(
-            model=model,
-            messages=anthropic_messages,
-            max_tokens=max_tokens,
-            system=system,
-            **extra_kwargs,
-            **{k: v for k, v in kwargs.items() if k not in ["model", "max_tokens", "tools"]}
-        ) as stream:
-            for text in stream.text_stream:
-                if text:
-                    streamed_text += text
-                if on_text_chunk:
-                    on_text_chunk(text)
-            try:
-                final_message = stream.get_final_message()
-                print({
-                    "stop_reason": final_message.stop_reason,
-                    "block_types": [
-                        block.type for block in final_message.content
-                    ],
-                    "usage": final_message.usage.model_dump(),
-                })
-            except Exception:
-                # final_message = None
-                raise
-                
-            if final_message is not None:
-                return self._build_chat_response(final_message)
-        
-        return ChatResponse(
-            content=streamed_text,
-            model=model,
-            usage={},
-            finish_reason="stop",
-            tool_uses=None
-        )
+        request = {
+            **kwargs,
+            "model": kwargs.get("model", self.model),
+            "messages": prepare_messages(messages),
+            "max_tokens": kwargs.get("max_tokens", 4096),
+            "system": kwargs.get("system", {}),
+        }
 
+        if tools:
+            request["tools"] = tools
+
+        request_id = uuid4().hex
+        log = self.session_log
+
+        if log is not None:
+            log.record(
+                "model_request",
+                {
+                    "request_id": request_id,
+                    "request": request,
+                },
+            )
+
+        try:
+            client = self._ensure_client()
+
+            with client.messages.stream(**request) as stream:
+                for event in stream:
+                    if log is not None:
+                        log.record(
+                            "model_stream",
+                            {
+                                "request_id": request_id,
+                                "event": event,
+                            },
+                        )
+
+                    if event.type == "text" and on_text_chunk is not None:
+                        on_text_chunk(event.text)
+
+                final_message = stream.get_final_message()
+
+            if log is not None:
+                log.record(
+                    "model_response",
+                    {
+                        "request_id": request_id,
+                        "response": final_message,
+                    },
+                )
+
+            return self._build_chat_response(final_message)
+
+        except (Exception, KeyboardInterrupt) as e:
+            if log is not None:
+                log.record(
+                    "model_request_failed",
+                    {
+                        "request_id": request_id,
+                        "exception_type": type(e).__name__,
+                        "message": str(e),
+                    },
+                )
+                log.record_exception("model_exception", e)
+            raise
