@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from ..tool_system.registry import ToolRegistry
 from .conversation import Conversation, TextContentBlock, ToolUseContentBlock
 from ..tool_system.context import ToolContext
+from .prompts import assemble_system_prompt
 from ..tool_system.protocol import ToolResult, ToolCall
 from ..tool_system.persist import Persist
 from pathlib import Path
@@ -15,45 +16,6 @@ from ..compact.auto_compact import (
     auto_compact_messages,
     AutoCompactState,
 )
-
-# ── System Prompt ──
-PROMPT_SECTIONS = {
-    "identity": ("You are BioPaster, a helpful assistant that can help researchers do biology research, "
-                 "including but not limited to literature review, data analysis, and experimental design."
-                 "[NOTE] Important: since we are currently in the development stage, in addition to your regular responses,"
-                 "you are required to report any errors, warnings, or difficulties you encounter while performing"
-                 "tasks. Whenever an error or warning occurs, you must provide the exact error/warning message verbatim"),
-    "tools": "Available tools:",
-    "language": "You should use the language of the user's question to respond.",
-    "reminder": ("When working with tool results, write down any important information you might need later in your response, "
-                "as the original tool result may becleared later. When the context window is nearly full, older messages will be "
-                "automatically summarized so you can continue working."),
-    "memory": "Relevant memories are injected below when available."
-}
-
-def assemble_system_prompt(context: ToolContext) -> str:
-    sections = [PROMPT_SECTIONS["identity"],
-                PROMPT_SECTIONS["language"],
-                PROMPT_SECTIONS["reminder"]]
-    # sections.append(f"Current time: {datetime.now().isoformat(timespec='seconds')}")
-    sections.append("Skills catalog:\n" + "")
-    # if context["memories"]:
-    #     sections.append(f"Relevant memories:\n{context['memories']}")
-    if context.workspace_root:
-        sections.append(f"Working directory:\n{context.workspace_root}")
-    
-    if context.tools:
-        tool_lines = "\n".join(
-            f"- {tool_name}"
-            for tool_name in context.tools
-        )
-        sections.append(f"Available tools:\n{tool_lines}")
-    
-    if context.mcp_clients:
-        mcp_names = list(context.mcp_clients.keys())
-        if mcp_names:
-            sections.append(f"Connected MCP servers:\n{', '.join(mcp_names)}")
-    return "\n\n".join(sections)
 
 @dataclass(frozen=True)
 class ToolEvent:
@@ -71,14 +33,20 @@ class AgentLoopResult:
     response_text: str
     usage: dict[str, Any] | None = None  # {"input_tokens": int, "output_tokens": int}
     num_turns: int = 0
+
+@dataclass(frozen=True)
+class ResultEvent:
+    subtype: str
+    is_error: bool
+    result: str
+    errors: list[str]
+    num_turns: int
+    type: str = "result"
     
-def _safe_call_handler(handler: Callable | None, event: ToolEvent):
+def _safe_call_handler(handler: Callable | None, event: ToolEvent | ResultEvent):
     if handler is None:
         return
-    try:
-        handler(event)
-    except Exception:
-        return
+    handler(event)
 
 # ── Tool Result Persist ──
 TOOL_RESULT_DIR = Path.home() / ".biopaster/.tool_results"
@@ -131,13 +99,38 @@ def _call_provider_for_turn(
 def summarize_tool_use(name: str, tool_input: dict[str, Any]) -> str:
     return
 
+def finish(
+    text: str,
+    subtype: str = "success",
+    errors: list[str] | None = None,
+    on_event: Callable | None = None,
+    turn_count: int = 0,
+    total_usage: dict | None = None
+) -> AgentLoopResult:
+    _safe_call_handler(
+        on_event,
+        ResultEvent(
+            subtype=subtype,
+            is_error=subtype != "success",
+            result=text,
+            errors=errors if errors is not None else [],
+            num_turns=turn_count,
+        ),
+    )
+
+    return AgentLoopResult(
+        response_text=text,
+        usage=total_usage if any(total_usage.values()) else None,
+        num_turns=turn_count,
+    )
+
 # ── Agent Loop ──
 def agent_loop(
     conversation: Conversation,
     provider,
     tool_registry: ToolRegistry,
     tool_context: ToolContext,
-    max_turns: int = 20,
+    max_turns: int = 500,
     stream: bool = True,
     on_text_chunk: Callable | None = None,
     on_event: Callable | None = None,
@@ -223,19 +216,32 @@ def agent_loop(
         
         # tool_uses = response.tool_uses or []
         if not tool_uses:
-            if stream and final_assistant_content and not streamed_live_text:
+            if (
+                stream
+                and final_assistant_content
+                and not streamed_live_text
+            ):
                 _emit_text_chunks(on_text_chunk, final_assistant_content)
-            if (final_assistant_content or "").strip() == "" and last_user_visible_message is not None:
-                return AgentLoopResult(
-                    response_text=last_user_visible_message,
-                    usage=total_usage if total_usage["input_tokens"] > 0 or total_usage["output_tokens"] > 0 else None,
-                    num_turns=turn_count,
-                )
-            return AgentLoopResult(
-                response_text=final_assistant_content,
-                usage=total_usage if total_usage["input_tokens"] > 0 or total_usage["output_tokens"] > 0 else None,
-                num_turns=turn_count,
-                )
+
+            if final_assistant_content.strip():
+                return finish(text=final_assistant_content, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
+
+            if last_user_visible_message is not None:
+                if stream:
+                    _emit_text_chunks(on_text_chunk, last_user_visible_message)
+                return finish(text=last_user_visible_message, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
+
+            return finish(
+                text="",
+                subtype="error_during_execution",
+                errors=[
+                    "The model returned no text or tool calls "
+                    f"(finish_reason={response.finish_reason!r})."
+                ],
+                on_event=on_event,
+                turn_count=turn_count,
+                total_usage=total_usage
+            )
         
         # Call each tool
         for tool_use in tool_uses:
@@ -262,16 +268,6 @@ def agent_loop(
                 
                 result = tool_registry.dispatch(tool_call, tool_context)
                 result_output = result.output
-                if tool_name.lower() == "sendusermessage" and isinstance(result_output, dict):
-                    msg = result_output.get("message")
-                    if isinstance(msg, str):
-                        last_user_visible_message = msg
-                if tool_name.lower() == "structuredoutput" and isinstance(result_output, dict):
-                    payload = result_output.get("structured_output")
-                    try:
-                        last_user_visible_message = json.dumps(payload, ensure_ascii=False, indent=2)
-                    except Exception:
-                        last_user_visible_message = str(payload)
                         
                 _safe_call_handler(
                     on_event,
@@ -304,8 +300,14 @@ def agent_loop(
                 conversation.add_tool_result_message(tool_id, error_str, is_error=True)
     
     # Reached max turns
-    return AgentLoopResult(
-        response_text="[Max tool turns reached]",
-        usage=total_usage if total_usage["input_tokens"] > 0 or total_usage["output_tokens"] > 0 else None,
-        num_turns=turn_count,
+    return finish(
+        text="",
+        subtype="error_max_turns",
+        errors=[
+            f"Reached maximum number of turns ({max_turns}). "
+            "The task may be unfinished."
+        ],
+        on_event=on_event,
+        turn_count=turn_count,
+        total_usage=total_usage
     )

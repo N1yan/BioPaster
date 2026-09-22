@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from biopaster.agent.agent_loop import ToolEvent, agent_loop
+from biopaster.agent.agent_loop import ToolEvent, ResultEvent, agent_loop
 from biopaster.agent.conversation import Conversation
 from biopaster.config import get_provider_config
 from biopaster.providers import get_provider_class
@@ -238,6 +238,16 @@ class BioPasterStreamingREPL:
 
             # A tool line must not be inserted into a Markdown block.
             renderer.finish()
+            
+            if isinstance(event, ResultEvent):
+                if event.is_error:
+                    for error in event.errors:
+                        self.console.print(
+                            Text(error, style="red")
+                        )
+                elif not self.stream and event.result:
+                    self.console.print(Markdown(event.result))
+                return
 
             if event.kind == "tool_use":
                 self.console.print(
@@ -252,6 +262,7 @@ class BioPasterStreamingREPL:
                     self.console.print(
                         f"[red]  ↳ {event.tool_name} failed[/red]"
                     )
+                    self.console.print(event.tool_output, markup=False)
                 else:
                     self.console.print(
                         f"[dim]  ↳ {event.tool_name} completed[/dim]"
@@ -277,7 +288,7 @@ class BioPasterStreamingREPL:
                     provider=self.provider,
                     tool_registry=self.tool_registry,
                     tool_context=self.tool_context,
-                    max_turns=20,
+                    max_turns=500,
                     stream=self.stream,
                     on_text_chunk=on_text_chunk,
                     on_event=on_event,
@@ -290,10 +301,6 @@ class BioPasterStreamingREPL:
             self._current_status = None
 
         renderer.finish()
-
-        if not self.stream:
-            self.console.print(Markdown(result.response_text))
-
         self.console.print()
 
     def run(self) -> None:

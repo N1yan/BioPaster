@@ -85,8 +85,16 @@ class AnthropicProvider:
                     on_text_chunk(text)
             try:
                 final_message = stream.get_final_message()
+                print({
+                    "stop_reason": final_message.stop_reason,
+                    "block_types": [
+                        block.type for block in final_message.content
+                    ],
+                    "usage": final_message.usage.model_dump(),
+                })
             except Exception:
-                final_message = None
+                # final_message = None
+                raise
                 
             if final_message is not None:
                 return self._build_chat_response(final_message)
