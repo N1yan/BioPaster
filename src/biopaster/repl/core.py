@@ -26,6 +26,10 @@ from biopaster.tool_system.permissions import (
     PermissionAnswer,
 )
 
+import json
+from biopaster.agent.prompts import PERMISSION_REVIEW_SYSTEM_PROMPT
+from biopaster.tool_system.permission_reviewer import review_permission
+
 
 def build_prompt_session(commands: list[str]) -> PromptSession:
     command_completer = WordCompleter(
@@ -138,6 +142,9 @@ class BioPasterStreamingREPL:
         )
         self.tool_context.session_log = self.session_log
         self.tool_context.permission_context.session_log = self.session_log
+        self.tool_context.permission_context.review_handler = (
+            self._review_permission
+        )
 
     def _handle_command(self, command: str) -> bool:
         if command == "/help":
@@ -181,9 +188,22 @@ class BioPasterStreamingREPL:
             self._current_status.stop()
 
         self.console.print()
+
+        if request.review_error is not None:
+            self.console.print(
+                "Automatic permission review failed. "
+                "Falling back to manual approval.",
+                style="yellow",
+            )
+            self.console.print(
+                f"Reason: {request.review_error}",
+                markup=False,
+            )
+
         self.console.print(
             Text("Permission required", style="bold yellow")
         )
+        
         self.console.print(
             f"Tool: {request.tool_name}",
             markup=False,
@@ -243,20 +263,43 @@ class BioPasterStreamingREPL:
                 allowed=True,
                 rules=(request.suggestions[index],),
             )
+            
+    def _review_permission(self, request, decisions):
+        environment = {
+            "workspace_root": str(self.tool_context.workspace_root),
+            "trusted_remote_repositories": [],
+            "trusted_internal_domains": [],
+            "trusted_cloud_buckets": [],
+            "key_internal_services": [],
+        }
+
+        system_prompt = (
+            PERMISSION_REVIEW_SYSTEM_PROMPT
+            + "\n\n## Application-provided Runtime Environment\n"
+            + json.dumps(environment, ensure_ascii=False)
+        )
+
+        return review_permission(
+            provider=self.provider,
+            messages=self.conversation.messages,
+            request=request,
+            decisions=decisions,
+            system_prompt=system_prompt,
+        )
         
     def _show_permissions(self) -> None:
         permissions = self.tool_context.permission_context
 
         while True:
-            rules = list(permissions.session_rules)
-
             self.console.print(
-                Text("Session permission rules", style="bold cyan")
+                Text("Session permissions", style="bold cyan")
             )
+            self.console.print(f"Current mode: {permissions.mode}")
+
+            rules = list(permissions.session_rules)
 
             if not rules:
                 self.console.print("No session permission rules.")
-                return
 
             for index, rule in enumerate(rules, start=1):
                 scope = (
@@ -264,7 +307,6 @@ class BioPasterStreamingREPL:
                     if rule.rule_content is None
                     else repr(rule.rule_content)
                 )
-
                 self.console.print(
                     f"{index}. {rule.behavior.upper()} "
                     f"{rule.tool_name} ({scope}) "
@@ -273,12 +315,40 @@ class BioPasterStreamingREPL:
                 )
 
             self.console.print(
-                "Enter a number to remove one rule, "
-                "'all' to remove all rules, or press Enter to return."
+                "\nEnter 'default' or 'auto' to switch mode, "
+                "a number to remove a rule, "
+                "'all' to clear rules, or Enter to return."
             )
 
             try:
-                answer = self.prompt_session.prompt("Remove: ").strip().lower()
+                answer = self.prompt_session.prompt(
+                    "Permissions: "
+                ).strip().lower()
+
+                if answer == "auto" and permissions.mode != "auto":
+                    if permissions.review_handler is None:
+                        self.console.print(
+                            "Auto mode is unavailable: no reviewer configured."
+                        )
+                        continue
+
+                    self.console.print(
+                        Text(
+                            "Auto mode lets a model approve operations that "
+                            "would otherwise require confirmation. "
+                            "Review requests may incur API charges. "
+                            "Model approval is not sandbox protection. "
+                            "Explicit ask and deny rules remain effective.",
+                            style="yellow",
+                        )
+                    )
+                    confirmation = self.prompt_session.prompt(
+                        "Enable auto mode? [y/N]: "
+                    ).strip().lower()
+
+                    if confirmation not in {"y", "yes"}:
+                        continue
+
             except (KeyboardInterrupt, EOFError):
                 self.console.print()
                 return
@@ -286,21 +356,25 @@ class BioPasterStreamingREPL:
             if not answer:
                 return
 
+            if answer in {"default", "auto"}:
+                permissions.mode = answer
+                self.console.print(f"Permission mode: {answer}")
+                return
+
             if answer == "all":
                 permissions.clear_session_rules()
                 self.console.print(
-                    Text(
-                        "All session rules removed, including "
-                        "allow, ask, and deny rules.",
-                        style="yellow",
-                    )
+                    "All session rules removed. "
+                    f"Mode remains: {permissions.mode}"
                 )
                 return
 
             try:
                 index = int(answer)
             except ValueError:
-                self.console.print("Please enter a listed number or 'all'.")
+                self.console.print(
+                    "Enter 'default', 'auto', 'all', or a listed number."
+                )
                 continue
 
             if not 1 <= index <= len(rules):
@@ -308,10 +382,7 @@ class BioPasterStreamingREPL:
                 continue
 
             permissions.remove_rule(rules[index - 1])
-
-            self.console.print(
-                Text("Selected permission rule removed.", style="yellow")
-            )
+            self.console.print("Selected permission rule removed.")
 
     def _print_startup_header(self) -> None:
         information = Table.grid(padding=(0, 1))

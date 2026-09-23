@@ -57,6 +57,7 @@ class AnthropicProvider:
         messages: list,
         tools: Optional[list[dict[str, Any]]] = None,
         on_text_chunk: Callable[[str], None] | None = None,
+        max_retries: int | None = None,
         **kwargs,
     ) -> ChatResponse:
         request = {
@@ -84,6 +85,8 @@ class AnthropicProvider:
 
         try:
             client = self._ensure_client()
+            if max_retries is not None:
+                client = client.with_options(max_retries=max_retries)
 
             with client.messages.stream(**request) as stream:
                 for event in stream:

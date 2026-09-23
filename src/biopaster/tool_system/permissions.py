@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from .errors import ToolPermissionError
 from typing import Callable, Literal, TYPE_CHECKING
@@ -38,6 +38,7 @@ class PermissionDecision:
 class PermissionTarget:
     tool_name: str
     rule_content: str | None
+    is_readonly: bool = False
     
 @dataclass(frozen=True)
 class PermissionRequest:
@@ -46,15 +47,31 @@ class PermissionRequest:
     description: str
     targets: tuple[PermissionTarget, ...]
     suggestions: tuple[PermissionRule, ...]
+    review_error: str | None = None
 
 @dataclass(frozen=True)
 class PermissionAnswer:
     allowed: bool
     rules: tuple[PermissionRule, ...] = ()
+    
+@dataclass(frozen=True)
+class PermissionReviewResult:
+    behavior: Literal["allow", "deny", "ask"]
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.behavior not in {"allow", "deny", "ask"}:
+            raise ValueError(
+                f"Invalid review behavior: {self.behavior!r}"
+            )
+
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("Review reason must be a non-empty string.")
 
 @dataclass
 class ToolPermissionContext:
     workspace_root: Path | None = None
+    mode: Literal["default", "auto"] = "default"
     additional_working_directories: tuple[Path, ...] = ()
     permission_handler: Callable[
         [PermissionRequest], PermissionAnswer
@@ -63,6 +80,14 @@ class ToolPermissionContext:
           repr=False,
           compare=False,
       )
+    review_handler: Callable[
+        [PermissionRequest, tuple[PermissionDecision, ...]],
+        PermissionReviewResult,
+    ] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     session_rules: list[PermissionRule] = field(
         default_factory=list,
         repr=False,
@@ -74,6 +99,8 @@ class ToolPermissionContext:
     )
     
     def __post_init__(self) -> None:
+        if self.mode not in {"default", "auto"}:
+              raise ValueError(f"Unsupported permission mode: {self.mode}")
         if self.workspace_root is not None:
             self.workspace_root = _resolve_path(self.workspace_root)
 
@@ -209,6 +236,16 @@ class ToolPermissionContext:
                         matched_rule=rule,
                     )
                     
+        if (
+            target.tool_name.lower() == "bash"
+            and target.rule_content is not None
+            and target.is_readonly
+        ):
+            return PermissionDecision(
+                behavior="allow",
+                reason="Command passed the supported read-only checks.",
+            )
+                        
         if target.tool_name.lower() in {
               "websearch",
               "webfetch",
@@ -296,6 +333,80 @@ class ToolPermissionContext:
                 reason="All permission targets were automatically allowed.",
             )
             return
+        
+        explicit_ask = any(
+            decision.behavior == "ask"
+            and decision.matched_rule is not None
+            for decision in decisions
+        )
+
+        if (
+            self.mode == "auto"
+            and not explicit_ask
+            and self.review_handler is not None
+        ):
+            review = None
+
+            try:
+                review = self.review_handler(request, tuple(decisions))
+                if not isinstance(review, PermissionReviewResult):
+                    raise TypeError(
+                        "Review handler must return PermissionReviewResult."
+                    )
+            except (KeyboardInterrupt, EOFError):
+                self.record_permission_decision(
+                    tool_name=request.tool_name,
+                    tool_use_id=request.tool_use_id,
+                    outcome="interrupted",
+                    reason="Permission review was interrupted.",
+                )
+                raise
+            except Exception as exc:
+                review = None
+                if self.session_log is not None:
+                    self.session_log.record(
+                        "permission_review_failed",
+                        {
+                            "tool_name": request.tool_name,
+                            "tool_use_id": request.tool_use_id,
+                            "message": str(exc),
+                        },
+                    )
+                request = replace(
+                    request,
+                    review_error=f"{type(exc).__name__}: {exc}",
+                )
+
+            if review is not None:
+                if self.session_log is not None:
+                    self.session_log.record(
+                        "permission_review",
+                        {
+                            "tool_name": request.tool_name,
+                            "tool_use_id": request.tool_use_id,
+                            "review": review,
+                        },
+                    )
+
+                if review.behavior == "deny":
+                    self.record_permission_decision(
+                        tool_name=request.tool_name,
+                        tool_use_id=request.tool_use_id,
+                        outcome="denied",
+                        reason=f"Model review: {review.reason}",
+                    )
+                    raise ToolPermissionError(
+                        f"Model review denied permission: {review.reason}"
+                    )
+
+                if review.behavior == "allow":
+                    self.record_permission_decision(
+                        tool_name=request.tool_name,
+                        tool_use_id=request.tool_use_id,
+                        outcome="allowed",
+                        reason=f"Model review: {review.reason}",
+                    )
+                    return
 
         if self.permission_handler is None:
             self.record_permission_decision(

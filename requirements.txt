@@ -15,3 +15,5 @@ nbformat==5.11.1
 nbclient==0.11.0
 ipykernel==7.3.0
 prompt-toolkit==3.0.53
+tree-sitter==0.26.0
+tree-sitter-bash==0.25.1

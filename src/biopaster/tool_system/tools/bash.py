@@ -9,6 +9,8 @@ from ..permissions import (
     PermissionRule,
     PermissionTarget,
 )
+from pathlib import Path
+from ..bash_permissions import analyze_bash_command
 from ..errors import ToolInputError
 
 
@@ -61,7 +63,8 @@ class BashTool:
                 "cwd must be a non-empty string"
             )
 
-        resolved_cwd = context.resolve_permission_paths(cwd)[-1]
+        cwd_paths = context.resolve_permission_paths(cwd)
+        resolved_cwd = cwd_paths[-1]
         if not resolved_cwd.is_dir():
             raise ToolInputError(
                 f"cwd is not a directory: {resolved_cwd}"
@@ -79,7 +82,8 @@ class BashTool:
 
         return {
             "command": command,
-            "cwd": cwd,
+            "cwd": str(resolved_cwd),
+            "_cwd_paths": cwd_paths,
             "timeout_s": timeout_s,
         }
             
@@ -92,8 +96,33 @@ class BashTool:
         context.permission_context.check_command_restrictions(command)
         tool_name = self.spec().name
 
-        cwd = tool_input.get("cwd") or context.cwd
-        cwd_paths = context.resolve_permission_paths(cwd)
+        cwd_paths = tool_input["_cwd_paths"]
+        analysis = analyze_bash_command(command, cwd_paths[-1])
+        targets = [PermissionTarget(tool_name, command, is_readonly=analysis.readonly)]
+        targets.extend(PermissionTarget("Read", str(path)) for path in cwd_paths)
+
+        for operation, raw_path in analysis.paths:
+            path = Path(raw_path)
+            requested_paths = (path,) if path.is_absolute() else tuple(base / path for base in cwd_paths)
+            for requested in requested_paths:
+                for candidate in context.resolve_permission_paths(requested):
+                    target = PermissionTarget(operation, str(candidate))
+                    if operation == "Edit" and str(candidate) == "/dev/null" and candidate.is_char_device():
+                        # Discarding output is safe by default, but an explicit
+                        # path rule must still take precedence.
+                        if context.permission_context.evaluate(target).matched_rule is None:
+                            continue
+                    if target not in targets:
+                        targets.append(target)
+
+        # A full-command allow must not hide explicit restrictions on a part.
+        # Unmatched subcommands do not create extra approval requirements.
+        for subcommand in analysis.commands:
+            target = PermissionTarget(tool_name, subcommand)
+            decision = context.permission_context.evaluate(target)
+            if decision.matched_rule is not None and decision.behavior in {"deny", "ask"}:
+                if target not in targets:
+                    targets.append(target)
 
         return PermissionRequest(
             tool_name=tool_name,
@@ -101,20 +130,9 @@ class BashTool:
             description=(
                 f"Working directory: {cwd_paths[-1]}\n"
                 f"Command:\n{command}"
+                + (f"\nPermission analysis: {analysis.reason}" if analysis.reason else "")
             ),
-            targets=(
-                PermissionTarget(
-                    tool_name=tool_name,
-                    rule_content=command,
-                ),
-                *(
-                    PermissionTarget(
-                        tool_name="Read",
-                        rule_content=str(path),
-                    )
-                    for path in cwd_paths
-                ),
-            ),
+            targets=tuple(targets),
             suggestions=(
                 PermissionRule(
                     tool_name=tool_name,
@@ -128,7 +146,7 @@ class BashTool:
 
     def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
         command = tool_input["command"]
-        cwd = context.resolve_permission_paths(tool_input["cwd"])[-1]
+        cwd = Path(tool_input["cwd"])
         timeout_s = tool_input["timeout_s"]
         try:
             completed = subprocess.run(
