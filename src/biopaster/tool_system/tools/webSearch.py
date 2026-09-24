@@ -100,6 +100,7 @@ class WebSearchTool:
                 output=[{
                     "type": "text",
                     "content": "[error] No query provided",
+                    "metadata": {},
                 }],
                 is_error=True,
             )
@@ -125,7 +126,7 @@ class WebSearchTool:
             output=[{
                 "type": "text",
                 "content": results,
-                "query": query,
+                "metadata": {"query": query},
             }],
             is_error=isinstance(results, str) and results.startswith("[error]"),
         )
@@ -137,6 +138,5 @@ if __name__ == "__main__":
     for out in result.output:
         for key, value in out.items():
             print(f"{key}: {str(value)[:200]}")
-
 
 

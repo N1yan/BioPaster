@@ -40,6 +40,7 @@ Detailed summary here.
 MAX_CONSECUTIVE_FAILURES = 3
 MAX_SUMMARY_TOKENS = 20_000
 AUTOCOMPACT_BUFFER_TOKENS = 13_000
+MIN_AUTOCOMPACT_BUFFER_TOKENS = 1024
 
 @dataclass
 class AutoCompactState:
@@ -110,21 +111,33 @@ def _get_compact_threshold(
     context_window: int,
     model_max_output_tokens: int,
 ) -> int:
-    
-    summary_reserved = min(
-        model_max_output_tokens,
-        MAX_SUMMARY_TOKENS,
+    compact_buffer = min(
+        AUTOCOMPACT_BUFFER_TOKENS,
+        max(MIN_AUTOCOMPACT_BUFFER_TOKENS, context_window // 10),
     )
-    
-    effective_window = context_window - summary_reserved
-    threshold = effective_window - AUTOCOMPACT_BUFFER_TOKENS
-    
+    threshold = (
+        context_window
+        - model_max_output_tokens
+        - compact_buffer
+    )
+
     if threshold <= 0:
         raise ValueError(
             f"Context window: {context_window} is too small for the configured "
-            f"summary reserve: {summary_reserved} and compact buffer: {AUTOCOMPACT_BUFFER_TOKENS}"
+            f"output reserve: {model_max_output_tokens} and compact buffer: {compact_buffer}"
         )
     return threshold
+
+
+def _get_summary_max_tokens(
+    context_window: int,
+    model_max_output_tokens: int,
+) -> int:
+    return min(
+        model_max_output_tokens,
+        MAX_SUMMARY_TOKENS,
+        max(1024, context_window // 4),
+    )
 
 
 def _estimate_input_tokens(
@@ -186,9 +199,9 @@ def auto_compact_messages(
         summary, summary_tokens = _generate_compact_summary(
             messages=api_messages,
             provider=provider,
-            max_tokens=min(
-                model_max_output_tokens,
-                MAX_SUMMARY_TOKENS,
+            max_tokens=_get_summary_max_tokens(
+                context_window=context_window,
+                model_max_output_tokens=model_max_output_tokens,
             ),
         )
     except Exception as e:

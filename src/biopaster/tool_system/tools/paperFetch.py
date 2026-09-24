@@ -409,16 +409,18 @@ def _public_result(
     output = {
         "type": "text",
         "content": text[:limit],
-        "status": status,
-        "canonical_ids": identity,
-        "fulltext_source": result.get("source"),
-        "url": result.get("url"),
-        "text_total_chars": len(text),
-        "truncated": len(text) > limit,
-        "metadata": _verified_metadata(result, identity),
+        "metadata": {
+            **(_verified_metadata(result, identity) or {}),
+            "status": status,
+            "canonical_ids": identity,
+            "fulltext_source": result.get("source"),
+            "url": result.get("url"),
+            "text_total_chars": len(text),
+            "truncated": len(text) > limit,
+        },
     }
     if status == "abstract_only":
-        output["message"] = "The source contained metadata and an abstract, but no full-text body."
+        output["metadata"]["message"] = "The source contained metadata and an abstract, but no full-text body."
     return output
 
 
@@ -439,7 +441,7 @@ def fetch_paper_fulltext(
         return [{
             "type": "text",
             "content": f"[error] {str(exc)}",
-            "status": "error",
+            "metadata": {"status": "error"},
         }]
 
     canonical = {"pmid": "", "pmcid": "", "doi": "", "arxiv_id": ""}
@@ -484,9 +486,11 @@ def fetch_paper_fulltext(
     return [{
         "type": "text",
         "content": "[error] No full text could be retrieved.",
-        "status": "fetch_failed" if had_candidates else "not_found",
-        "canonical_ids": canonical,
-        "errors": errors,
+        "metadata": {
+            "status": "fetch_failed" if had_candidates else "not_found",
+            "canonical_ids": canonical,
+            "errors": errors,
+        },
     }]
 
 

@@ -162,8 +162,11 @@ def agent_loop(
     total_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
     turn_count = 0
     for turn in range(max_turns):
-        call_kwargs: dict[str, Any] = {"tools": tool_schemas}
-        call_kwargs["system"] = system_prompt
+        call_kwargs: dict[str, Any] = {
+            "tools": tool_schemas,
+            "system": system_prompt,
+            "max_tokens": provider.max_output_tokens,
+        }
         
         # compact messages
         conversation.messages = micro_compact_messages(conversation.messages, 
@@ -173,7 +176,7 @@ def agent_loop(
             messages=conversation.messages,
             provider=provider,
             context_window=provider.context_window,
-            model_max_output_tokens= call_kwargs.get("max_tokens", 4096),
+            model_max_output_tokens= call_kwargs["max_tokens"],
             state=auto_compact_state,
             **{"tool_schemas": tool_schemas, "system": system_prompt}
         )
@@ -198,12 +201,31 @@ def agent_loop(
             
         # Build assistant content
         final_assistant_content = response.content or ""
-        
+        tool_uses = response.tool_uses or []
+
+        if response.finish_reason == "max_tokens":
+            if final_assistant_content:
+                conversation.add_assistant_message(
+                    final_assistant_content
+                )
+
+            return finish(
+                text=final_assistant_content,
+                subtype="error_max_tokens",
+                errors=[
+                    "The model response reached the output-token limit "
+                    "and may be incomplete."
+                ],
+                on_event=on_event,
+                turn_count=turn_count,
+                total_usage=total_usage,
+            )
+            
         assistant_blocks: list = []
+
         if response.content:
             assistant_blocks.append(TextContentBlock(type="text", text=response.content))
         
-        tool_uses = response.tool_uses or []
         for tool_use in tool_uses:
             assistant_blocks.append(
                 ToolUseContentBlock(

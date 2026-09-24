@@ -609,7 +609,7 @@ def search_papers(
 ) -> list[dict[str, Any]]:
     query = (query or "").strip()
     if not query:
-        return [{"type": "text", "content": "[error] query is required", "results": []}]
+        return [{"type": "text", "content": "[error] query is required", "metadata": {"results": []}}]
 
     selected = list(sources or VALID_SOURCES)
     invalid = [src for src in selected if src not in VALID_SOURCES]
@@ -617,13 +617,13 @@ def search_papers(
         return [{
             "type": "text",
             "content": f"[error] Invalid sources: {invalid}. Valid: {list(VALID_SOURCES)}",
-            "results": [],
+            "metadata": {"results": []},
         }]
     if not selected:
         return [{
             "type": "text",
             "content": "[error] No sources selected",
-            "results": [],
+            "metadata": {"results": []},
         }]
 
     try:
@@ -632,7 +632,7 @@ def search_papers(
         return [{
             "type": "text",
             "content": f"[error] {str(exc)}",
-            "results": [],
+            "metadata": {"results": []},
         }]
 
     rows = max(1, min(int(max_item), 50))
@@ -663,11 +663,13 @@ def search_papers(
     return [{
         "type": "text",
         "content": merged,
-        "query": query,
-        "year_limit": [year_start, year_end] if year_start is not None else None,
-        "sources_queried": selected,
-        "result_count": len(merged),
-        "errors": errors or None,
+        "metadata": {
+            "query": query,
+            "year_limit": [year_start, year_end] if year_start is not None else None,
+            "sources_queried": selected,
+            "result_count": len(merged),
+            "errors": errors or None,
+        },
     }]
     
 

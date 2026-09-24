@@ -62,6 +62,18 @@ class Conversation:
     def add_user_message(self, text: str):
         self.add_message(role="user", content=text)
     
+    def _is_tool_result_message(self, api_message: dict) -> bool:
+        content = api_message["content"]
+        return (
+            api_message["role"] == "user"
+            and isinstance(content, list)
+            and bool(content)
+            and all(
+                block.get("type") == "tool_result"
+                for block in content
+            )
+        )
+
     def get_messages(self) -> list[dict]:
         """Get messages in API format (Anthropic style)."""
          
@@ -89,9 +101,20 @@ class Conversation:
                             "tool_use_id": block.tool_use_id,
                             "content": block.content,
                             "is_error": block.is_error
-                                
                         })
                 api_messages.append({"role": msg.role, "content": content_blocks})
-            
-        return api_messages
+                
+        # merge tool results in one turn into a single user message
+        merged_api_messages = []
+        for message in api_messages:
+            if (
+                merged_api_messages
+                and self._is_tool_result_message(message)
+                and self._is_tool_result_message(merged_api_messages[-1])
+            ):
+                merged_api_messages[-1]["content"].extend(message["content"])
+            else:
+                merged_api_messages.append(message)
+
+        return merged_api_messages
     

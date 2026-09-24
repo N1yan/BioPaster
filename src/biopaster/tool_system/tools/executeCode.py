@@ -43,24 +43,27 @@ def _notebook_output_parse(notebook: nbformat.NotebookNode) -> tuple[list[dict],
             tool_outputs.append({
                 "type": "text",
                 "content": output.text,
+                "metadata": {"output_type": "stream", "name": output.get("name", "stdout")},
             })
         elif output.output_type in {"execute_result", "display_data"}:
             if "text/plain" in output.data:
                 tool_outputs.append({
                     "type": "text",
                     "content": output.data["text/plain"],
+                    "metadata": {"output_type": output.output_type},
                 })
             if "image/png" in output.data:
                 tool_outputs.append({
                     "type": "image",
-                    "media_type": "image/png",
                     "content": output.data["image/png"],
+                    "metadata": {"media_type": "image/png", "output_type": output.output_type},
                 })
         elif output.output_type == "error":
             has_error = True
             tool_outputs.append({
                 "type": "text",
                 "content": "\n".join(output.traceback),
+                "metadata": {"output_type": "error", "ename": output.ename, "evalue": output.evalue},
             })
     return tool_outputs, has_error
 
@@ -276,6 +279,7 @@ class ExecuteCodeTool:
             tool_outputs.append({
             "type": "text",
             "content": f"Executed successfully, and it was saved to: {notebook_path}",
+            "metadata": {"notebook_path": str(notebook_path)},
             })
 
             return ToolResult(
@@ -287,6 +291,7 @@ class ExecuteCodeTool:
             tool_outputs.append({
             "type": "text",
             "content": f"[error] failed to save notebook: {e}",
+            "metadata": {"notebook_path": str(notebook_path)},
             })
             return ToolResult(
                 name="executeCode",

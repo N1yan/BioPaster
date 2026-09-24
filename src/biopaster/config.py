@@ -25,7 +25,7 @@ def get_default_config() -> dict[str, Any]:
                 "base_url": "https://openrouter.ai/api",
                 "default_model": "nvidia/nemotron-3-nano-30b-a3b:free",
                 "context_window": 128000,
-                "max_output_tokens": 8192
+                "max_output_tokens": 32000
             }
         },
         "session": {

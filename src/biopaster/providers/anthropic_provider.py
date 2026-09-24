@@ -9,13 +9,17 @@ class AnthropicProvider:
                  base_url: str, 
                  model: str, 
                  context_window: int = 128000, 
-                 max_output_tokens: int = 8192):
+                 max_output_tokens: int = 32000):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
         self.client = None
         self.context_window = context_window
-        self.max_output_tokens = max_output_tokens
+        self.max_output_tokens = (
+            max_output_tokens
+            if max_output_tokens is not None
+            else 32000
+        )
         self.session_log = None
 
     def _ensure_client(self):
@@ -64,7 +68,7 @@ class AnthropicProvider:
             **kwargs,
             "model": kwargs.get("model", self.model),
             "messages": prepare_messages(messages),
-            "max_tokens": kwargs.get("max_tokens", 4096),
+            "max_tokens": kwargs.get("max_tokens") or self.max_output_tokens,
             "system": kwargs.get("system", {}),
         }
 

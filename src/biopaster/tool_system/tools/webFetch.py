@@ -180,8 +180,8 @@ class WebFetchTool:
                 name="webFetch",
                 output=[{
                     "type": "text",
-                    "url": url,
                     "content": "[error] only http/https URLs are allowed",
+                    "metadata": {"url": url},
                 }],
                 is_error=True,
             )

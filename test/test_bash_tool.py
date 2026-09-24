@@ -34,6 +34,8 @@ def test_bash_executes_command_in_allowed_cwd(tmp_path: Path) -> None:
         "content": {
             "stdout": "hello",
             "stderr": "",
+        },
+        "metadata": {
             "exit_code": 0,
             "cwd": str(tmp_path),
         },
@@ -50,6 +52,7 @@ def test_bash_rejects_empty_command(tmp_path: Path) -> None:
     assert result.output == [{
         "type": "text",
         "content": "Tool Bash invalid input: command must be a non-empty string",
+        "metadata": {},
     }]
 
 
@@ -69,6 +72,8 @@ def test_bash_timeout_preserves_partial_output(tmp_path: Path) -> None:
         "content": {
             "stdout": "before",
             "stderr": "",
+        },
+        "metadata": {
             "exit_code": None,
             "cwd": str(tmp_path),
             "timed_out": True,
@@ -111,6 +116,8 @@ def test_bash_nonzero_exit_preserves_stdout_and_stderr(tmp_path: Path) -> None:
         "content": {
             "stdout": "output",
             "stderr": "error",
+        },
+        "metadata": {
             "exit_code": 7,
             "cwd": str(tmp_path),
         },
@@ -129,6 +136,7 @@ def test_bash_rejects_missing_cwd(tmp_path: Path) -> None:
     assert result.output == [{
         "type": "text",
         "content": f"Tool Bash invalid input: cwd is not a directory: {missing}",
+        "metadata": {},
     }]
 
 
@@ -142,4 +150,5 @@ def test_bash_rejects_invalid_timeout(tmp_path: Path) -> None:
     assert result.output == [{
         "type": "text",
         "content": "Tool Bash invalid input: timeout_s must be an integer of at least 1",
+        "metadata": {},
     }]

@@ -119,6 +119,6 @@ class WriteTool:
             output=[{
                 "type": "text",
                 "content": content,
-                "file_path": str(path),
+                "metadata": {"file_path": str(path)},
             }],
         )

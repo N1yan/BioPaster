@@ -42,7 +42,7 @@ class CounterTool:
 
     def run(self, tool_input, context):
         self.executions += 1
-        return ToolResult("Counter", [{"type": "text", "content": "Completed."}])
+        return ToolResult("Counter", [{"type": "text", "content": "Completed.", "metadata": {}}])
 
 
 @pytest.fixture
@@ -147,9 +147,11 @@ def test_interruption_preserves_results_and_allows_next_turn(
 
     class FakeProvider:
         context_window = 128_000
+        max_output_tokens = 8192
         calls = 0
 
         def chat_stream_response(self, messages, **kwargs):
+            assert kwargs["max_tokens"] == self.max_output_tokens
             self.calls += 1
             if self.calls == 1:
                 return ChatResponse(

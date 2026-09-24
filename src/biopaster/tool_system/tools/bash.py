@@ -18,7 +18,8 @@ class BashTool:
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="Bash",
-            description="Run basic Bash commands. Use executeCodeTool for scientific code.",
+            description=("Run basic bash commands. Do not use it to run python/R code."
+                         "Do not use bash tool to run scientific code using executeCode instead."),
             input_schema={
                 "type": "object",
                 "additionalProperties": False,
@@ -170,6 +171,8 @@ class BashTool:
                     "content": {
                         "stdout": stdout,
                         "stderr": stderr,
+                    },
+                    "metadata": {
                         "exit_code": None,
                         "cwd": str(cwd),
                         "timed_out": True,
@@ -185,6 +188,8 @@ class BashTool:
                 "content": {
                     "stdout": completed.stdout,
                     "stderr": completed.stderr,
+                },
+                "metadata": {
                     "exit_code": completed.returncode,
                     "cwd": str(cwd),
                 },

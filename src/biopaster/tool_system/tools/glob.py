@@ -84,9 +84,16 @@ class GlobTool:
         names = [entry.name for entry in matched_files[:max_files]]
         return ToolResult(
             name="Glob",
-            output=[{"type": "text", "content": {
-                "truncated": truncated, "matched_files": names, "file_count": len(names),
-            }}],
+            output=[{
+                "type": "text",
+                "content": names,
+                "metadata": {
+                    "path": str(path),
+                    "pattern": tool_input["pattern"],
+                    "truncated": truncated,
+                    "file_count": len(names),
+                },
+            }],
         )
         
         

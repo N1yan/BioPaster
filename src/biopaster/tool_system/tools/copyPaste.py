@@ -43,7 +43,7 @@ def _find_all(text: str, pattern: str) -> list[int]:
         indexes.append(index)
         start = index + 1
 
-def _read_tool_result(file: Path) -> str:
+def _read_tool_result(file: Path) -> tuple[str, dict[str, Any]]:
     result = json.loads(file.read_text(encoding="utf-8"))
     content = result.get("content", "")
     metadata = result.get("metadata", {})
@@ -53,7 +53,8 @@ class CopyPasteTool:
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="copyPaste",
-            description="Copy text from the local files and paste it to the another file.",
+            description=("Copy text or code from the local files and paste it to the another file."
+                         "Supports multiple source file formats, including but not limited to JSON, PDF, and TXT."),
             input_schema={
                 "type": "object",
                 "additionalProperties": False,
@@ -131,6 +132,13 @@ class CopyPasteTool:
             source_content = source_path.read_text(encoding="utf-8")
             metadata = {}
 
+        metadata = {
+            **metadata,
+            "source_file": str(source_path),
+            "target_file": str(target_path),
+            "usage": tool_input["usage"],
+        }
+
         start_indexes = _find_all(source_content, start_string)
         end_indexes = _find_all(source_content, end_string)
         if not start_indexes or not end_indexes:
@@ -139,15 +147,22 @@ class CopyPasteTool:
                 output=[{
                     "type": "text",
                     "content": f"[error] {start_string!r} or {end_string!r} not found",
+                    "metadata": metadata,
                 }],
                 is_error=True,
             )
         if len(start_indexes) > 1 or len(end_indexes) > 1:
+            errors = []
+            if len(start_indexes) > 1:
+                errors.append(f"[error] multiple {start_string!r} found")
+            if len(end_indexes) > 1:
+                errors.append(f"[error] multiple {end_string!r} found")
             return ToolResult(
                 name="copyPaste",
                 output=[{
                     "type": "text",
-                    "content": f"[error] multiple {start_string!r} or {end_string!r} found",
+                    "content": "\n".join(errors),
+                    "metadata": metadata,
                 }],
                 is_error=True,
             )
@@ -160,8 +175,9 @@ class CopyPasteTool:
         copied += source_content[start_index:end_index] + "\n\n"
         
         annotation = f"#{"-"*20}Annotation{"-"*20}\n"
+        annotation += f"# PURPOSE: {metadata.get('usage')}\n" if metadata.get("usage", "") else ""
         annotation += f"# URL: {metadata.get('url')}\n" if metadata.get("url", "") else ""
-        annotation += f"# Local File: {source_path.name}\n" if source_path.suffix.lower() == ".pdf" else ""
+        annotation += f"# Local Evidence File: {source_path.name}\n" # if source_path.suffix.lower() == ".pdf" else ""
         annotation += f"# Title: {metadata.get('title')}\n" if metadata.get("title", "") else ""
         annotation += f"# Author: {metadata.get('authors')}\n" if metadata.get("authors", "") else ""
         annotation += f"# Publication Date: {metadata.get('publication_dates')}\n" if metadata.get("publication_dates", "") else ""

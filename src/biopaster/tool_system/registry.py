@@ -71,7 +71,7 @@ class ToolRegistry:
         def error_result(message: str) -> ToolResult:
             return ToolResult(
                 name=tool_name,
-                output=[{"type": "text", "content": message}],
+                output=[{"type": "text", "content": message, "metadata": {}}],
                 is_error=True,
                 tool_use_id=call.tool_use_id,
             )

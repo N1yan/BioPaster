@@ -88,11 +88,13 @@ def download_file(
         return [{
             "type": "text",
             "content": "[error] No URL provided",
+            "metadata": {},
         }]
     if not re.match(r"^(https?|ftp)://", url, re.I):
         return [{
             "type": "text",
             "content": "[error] URL must be http, https, or ftp",
+            "metadata": {"url": url},
         }]
 
     dest_dir = Path(save_dir or os.getcwd())
@@ -106,32 +108,32 @@ def download_file(
                 return [{
                     "type": "text",
                     "content": "[error] got HTML instead of a file",
-                    "url": final_url,
-                    "content_type": content_type,
+                    "metadata": {"url": final_url, "content_type": content_type},
                 }]
             dest_path = dest_dir / _safe_filename(url, filename, content_type, disposition)
             if dest_path.exists():
                 return [{
                     "type": "text",
                     "content": f"[error] file already exists: {dest_path}",
-                    "path": str(dest_path.resolve()),
+                    "metadata": {"path": str(dest_path.resolve())},
                 }]
             content = resp.read()
     except (urllib.error.URLError, TimeoutError) as exc:
         return [{
             "type": "text",
             "content": "[error] failed to download file",
-            "url": url,
-            "error": str(exc),
+            "metadata": {"url": url, "error": str(exc)},
         }]
 
     if not _wants_html(url, filename) and _is_html(content_type, content):
         return [{
             "type": "text",
             "content": "[error] got HTML instead of a file",
-            "url": final_url,
-            "content_type": content_type,
-            "bytes": len(content),
+            "metadata": {
+                "url": final_url,
+                "content_type": content_type,
+                "bytes": len(content),
+            },
         }]
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -139,10 +141,12 @@ def download_file(
     return [{
         "type": "text",
         "content": "File downloaded successfully",
-        "url": final_url,
-        "path": str(dest_path.resolve()),
-        "bytes": len(content),
-        "content_type": content_type,
+        "metadata": {
+            "url": final_url,
+            "path": str(dest_path.resolve()),
+            "bytes": len(content),
+            "content_type": content_type,
+        },
     }]
 
 class FileDownloadTool:
@@ -228,8 +232,10 @@ class FileDownloadTool:
             file.write(content)
         return ToolResult(name=self.spec().name, output=[{
             "type": "text", "content": "File downloaded successfully",
-            "url": final_url, "path": str(path), "bytes": len(content),
-            "content_type": content_type,
+            "metadata": {
+                "url": final_url, "path": str(path), "bytes": len(content),
+                "content_type": content_type,
+            },
         }])
 
 

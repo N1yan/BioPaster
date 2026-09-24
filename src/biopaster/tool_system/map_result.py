@@ -1,5 +1,7 @@
 
-from ast import List
+import json
+from dataclasses import replace
+
 from .protocol import ToolResult
 
 def _image_block(image_data: str, media_type: str) -> dict:
@@ -12,43 +14,47 @@ def _image_block(image_data: str, media_type: str) -> dict:
         }
     }
 
+def _text_block(output: dict) -> dict:
+    value = output["content"]
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    metadata = output["metadata"]
+    if metadata:
+        text = "Metadata:\n" + json.dumps(metadata, ensure_ascii=False) + "\n\nContent:\n" + text
+    return {"type": "text", "text": text}
+
+
 def map_tool_result(tool_result: ToolResult) -> ToolResult:
     content: list[dict] = []
     for output in tool_result.output:
         output_type = output.get("type", "text")
         if output_type == "text":
-            content.append({
-                "type": "text",
-                "text": str(output.get("content", ""))
-            })
+            content.append(_text_block(output))
         if output_type == "image":
-            info = [f"{k}: {output[k]}" for k in output.keys() if k not in ["type", "media_type", "content"]]
+            metadata = output["metadata"]
+            info = {key: value for key, value in metadata.items() if key != "media_type"}
             if info:
                 content.append({
                     "type": "text",
-                    "text": "\n".join(info)
+                    "text": json.dumps(info, ensure_ascii=False),
                 })
-            content.append(_image_block(output.get("content", ""), output.get("media_type", "")))
-    return ToolResult(
-        name=tool_result.name,
-        output=content,
-        is_error=tool_result.is_error,
-    )
+            content.append(_image_block(output["content"], metadata["media_type"]))
+    return replace(tool_result, output=content)
     
     
         
-def map_tool_result_gemma(tool_result: ToolResult) -> List:
+def map_tool_result_gemma(tool_result: ToolResult) -> list[dict | ToolResult]:
     texts = []
     images = []
     for output in tool_result.output:
         output_type = output.get("type", "text")
         if output_type == "text":
-            texts.append({
-                "type": "text",
-                "text": str(output.get("content", ""))
-            })
+            texts.append(_text_block(output))
         if output_type == "image":
-            images.append(_image_block(output.get("content", ""), output.get("media_type", "")))
+            metadata = output["metadata"]
+            info = {key: value for key, value in metadata.items() if key != "media_type"}
+            if info:
+                texts.append({"type": "text", "text": json.dumps(info, ensure_ascii=False)})
+            images.append(_image_block(output["content"], metadata["media_type"]))
     if images:
         texts.append({
             "type": "text",
@@ -57,9 +63,5 @@ def map_tool_result_gemma(tool_result: ToolResult) -> List:
     if not texts:
         texts = [{"type": "text", "text": "[empty tool result]"}]
         
-    return [*images, ToolResult(
-        name=tool_result.name,
-        output=texts,
-        is_error=tool_result.is_error,
-    )]
+    return [*images, replace(tool_result, output=texts)]
     

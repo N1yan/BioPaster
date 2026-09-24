@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -10,55 +12,71 @@ ALWAYS_SAVE = frozenset({"webfetch", "paperfetch"})
 
 class Persist:
     def __init__(self, save_dir: Path, max_content_length: int = 5000):
-        save_dir.mkdir(exist_ok=True)
+        save_dir.mkdir(parents=True, exist_ok=True)
         self.save_dir = save_dir
         self.max_content_length = max_content_length
 
-    def _truncate_content(self, output: dict) -> tuple[dict, bool]:
-        output["content"] = str(output["content"])[:self.max_content_length]
-        output["truncated_status"] = "[Is truncated] tool result has been truncated due to the length limit of the tool result."
-        # return output
-        
-    def _write_output(self, output: dict,tool_result_name: str, tool_use_id: str) -> dict:
-        path = self.save_dir / f"BioPaster_{tool_result_name}_{tool_use_id}.json"
+    @staticmethod
+    def _content_text(content) -> str:
+        if isinstance(content, str):
+            return content
+        return json.dumps(content, ensure_ascii=False)
+
+    def _write_output(
+        self,
+        output: dict,
+        tool_result_name: str,
+        tool_use_id: str,
+        block_index: int,
+    ) -> Path:
+        suffix = "" if block_index == 0 else f"_{block_index + 1}"
+        path = self.save_dir / f"BioPaster_{tool_result_name}_{tool_use_id}{suffix}.json"
         path.write_text(
             json.dumps(output, indent=4, ensure_ascii=False),
             encoding="utf-8",
         )
-        output["tool_result_saved_path"] = f"[Saved path]: tool result has been saved to {path}."
-        # return output
+        return path
 
-    def persist(self, tool_result: ToolResult, tool_use_id: str) -> tuple[ToolResult, dict]:
+    def persist(self, tool_result: ToolResult, tool_use_id: str) -> ToolResult:
         name = (tool_result.name or "").lower()
-        if name == "read":
-            return tool_result
-        if name in ALWAYS_SAVE:
-            for out in tool_result.output:
-                if out.get("type") == "text":
-                    self._write_output(out, name, tool_use_id)
-                    if len(out.get("content", "")) > self.max_content_length:
-                        self._truncate_content(out)
-                else:
-                    self._truncate_content(out)
-                    
-        else:
-            for out in tool_result.output:
-                if out.get("type") == "text" and len(out.get("content", "")) > self.max_content_length:
-                    self._write_output(out, name, tool_use_id)
-                    self._truncate_content(out)
+        outputs = deepcopy(tool_result.output)
 
-        return tool_result
+        if name == "read":
+            return replace(tool_result, output=outputs)
+
+        for index, output in enumerate(outputs):
+            # images cannot be truncated
+            if output["type"] != "text":
+                continue
+
+            content_text = self._content_text(output["content"])
+            preview_truncated = len(content_text) > self.max_content_length
+
+            if name in ALWAYS_SAVE or preview_truncated:
+                path = self._write_output(
+                    tool_result.output[index],
+                    name,
+                    tool_use_id,
+                    index,
+                )
+                output["metadata"]["tool_result_saved_path"] = str(path)
+
+            if preview_truncated:
+                output["content"] = content_text[:self.max_content_length]
+                output["metadata"]["preview_truncated"] = True
+                output["metadata"]["preview_total_chars"] = len(content_text)
+
+        return replace(tool_result, output=outputs)
 
 
 if __name__ == "__main__":
     tool_result = ToolResult(
         name="test",
-        output=[{"type": "text", "content": "a" * 200},
-                {"type": "image", "content": "b" * 200}],
+        output=[{"type": "text", "content": "a" * 200, "metadata": {}},
+                {"type": "image", "content": "Yg==", "metadata": {"media_type": "image/png"}}],
         is_error=False,
         tool_use_id="test",
     )
     persist = Persist(Path("./.tool_results"), max_content_length=100)
     tool_result = persist.persist(tool_result, "id123")
     print(tool_result)
-

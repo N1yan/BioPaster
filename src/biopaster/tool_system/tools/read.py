@@ -125,7 +125,7 @@ def _read_image(path: Path) -> ToolResult:
             name="Read",
             output=[{"type": "text", 
                      "content": f"[error] image file is empty: {path}",
-                     "filePath": str(path)}],
+                     "metadata": {"filePath": str(path)}}],
             is_error=True,
         )
     try:
@@ -135,7 +135,7 @@ def _read_image(path: Path) -> ToolResult:
             name="Read",
             output=[{"type": "text", 
                      "content": f"[error] failed to read image: {exc}",
-                     "filePath": str(path)}],
+                     "metadata": {"filePath": str(path)}}],
             is_error=True,
         )
     if _estimate_tokens(buf) > IMAGE_MAX_TOKENS:
@@ -146,7 +146,7 @@ def _read_image(path: Path) -> ToolResult:
                 name="Read",
                 output=[{"type": "text", 
                          "content": f"[error] failed to compress image: {exc}",
-                         "filePath": str(path)}],
+                         "metadata": {"filePath": str(path)}}],
                 is_error=True,
             )
     encoded = base64.b64encode(buf).decode("ascii")
@@ -154,10 +154,12 @@ def _read_image(path: Path) -> ToolResult:
         name="Read",
         output=[{
             "type": "image",
-            "media_type": media,
             "content": encoded,
-            "originalSize": len(raw),
-            "filePath": str(path),
+            "metadata": {
+                "media_type": media,
+                "originalSize": len(raw),
+                "filePath": str(path),
+            },
             }]
     )
 
@@ -173,7 +175,7 @@ def _pdf_error(message: str, path: Path) -> ToolResult:
     return ToolResult(name="Read", 
                       output=[{"type": "text", 
                                "content": f"[error] {message}",
-                               "filePath": str(path)}],
+                               "metadata": {"filePath": str(path)}}],
                       is_error=True,
                       )
 
@@ -278,13 +280,15 @@ def _read_pdf(path: Path, pages: str | None = None, mode: str = "text") -> ToolR
         for item in extracted:
             outputs.append({
                 "type": item["type"],
-                "media_type": item.get("media_type", ""),
                 "content": item["content"],
-                "page": item["page"],
-                "filePath": str(path),
-                "originalSize": len(raw),
-                "pageCount": page_count,
-                "count": len(extracted),
+                "metadata": {
+                    "media_type": item.get("media_type", ""),
+                    "page": item["page"],
+                    "filePath": str(path),
+                    "originalSize": len(raw),
+                    "pageCount": page_count,
+                    "count": len(extracted),
+                },
             })
         
         return ToolResult(
@@ -452,6 +456,7 @@ def _notebook_blocks(
     blocks: list[dict[str, Any]] = [{
         "type": "text",
         "content": f"{path}  cells {offset}-{offset + len(processed) - 1} / {cell_count}  limit={limit}",
+        "metadata": {"filePath": str(path), "cell_count": cell_count, "offset": offset, "limit": limit},
     }]
     for cell in processed:
         index = cell.get("index")
@@ -463,7 +468,7 @@ def _notebook_blocks(
         blocks.append({
             "type": "text",
             "content": f"{header}\n{source}",
-            "cell": index,
+            "metadata": {"filePath": str(path), "cell": index},
         })
         for out in cell.get("outputs") or []:
             if not isinstance(out, dict):
@@ -472,15 +477,17 @@ def _notebook_blocks(
             if text:
                 blocks.append({"type": "text", 
                                "content": str(text), 
-                               "cell": index})
+                               "metadata": {"filePath": str(path), "cell": index}})
             image = out.get("image")
             if isinstance(image, dict) and image.get("base64"):
                 blocks.append({
                     "type": "image",
-                    "media_type": image.get("type") or "image/png",
                     "content": image["base64"],
-                    "filePath": str(path),
-                    "cell": index,
+                    "metadata": {
+                        "media_type": image.get("type") or "image/png",
+                        "filePath": str(path),
+                        "cell": index,
+                    },
                 })
     return blocks
 
@@ -492,7 +499,7 @@ def _read_notebook(path: Path, offset: int = 1, limit: int = 200) -> ToolResult:
             name="Read",
             output=[{"type": "text", 
                      "content": f"[error] Not a valid Jupyter notebook: {path}",
-                     "filePath": str(path)}],
+                     "metadata": {"filePath": str(path)}}],
             is_error=True,
         )
 
@@ -509,7 +516,7 @@ def _read_notebook(path: Path, offset: int = 1, limit: int = 200) -> ToolResult:
             output=[{
                 "type": "text",
                 "content": f"[error] Notebook has {len(cells)} cells; cannot start at offset {offset}.",
-                "filePath": str(path)}],
+                "metadata": {"filePath": str(path)}}],
             is_error=True,
         )
 
@@ -525,7 +532,7 @@ def _read_notebook(path: Path, offset: int = 1, limit: int = 200) -> ToolResult:
             name="Read",
             output=[{"type": "text", 
                      "content": f"[error] Notebook content ({payload_bytes} bytes) exceeds maximum allowed size ({NOTEBOOK_MAX_JSON_BYTES} bytes).",
-                     "filePath": str(path)}],
+                     "metadata": {"filePath": str(path)}}],
             is_error=True,
         )
 
@@ -572,7 +579,7 @@ def _read_text(path: Path, offset: int = 1, limit: int | None = None) -> ToolRes
                     f"[error] File content ({size} bytes) exceeds maximum allowed size "
                     f"({TEXT_MAX_BYTES} bytes). Use offset and limit to read a portion."
                 ),
-                "filePath": str(path),
+                "metadata": {"filePath": str(path)},
             }],
             is_error=True,
         )
@@ -609,10 +616,12 @@ def _read_text(path: Path, offset: int = 1, limit: int | None = None) -> ToolRes
             name="Read",
             output=[{"type": "text", 
                      "content": warning,
-                     "filePath": str(path),
-                     "numLines": 0,
-                     "startLine": offset,
-                     "totalLines": total_lines}]
+                     "metadata": {
+                         "filePath": str(path),
+                         "numLines": 0,
+                         "startLine": offset,
+                         "totalLines": total_lines,
+                     }}]
         )
 
     return ToolResult(
@@ -620,10 +629,12 @@ def _read_text(path: Path, offset: int = 1, limit: int | None = None) -> ToolRes
         output=[{
             "type": "text",
             "content": _add_line_numbers(content, start_line),
-            "filePath": str(path),
-            "numLines": len(selected),
-            "startLine": start_line,
-            "totalLines": total_lines,
+            "metadata": {
+                "filePath": str(path),
+                "numLines": len(selected),
+                "startLine": start_line,
+                "totalLines": total_lines,
+            },
         }]
     )
 
@@ -806,7 +817,6 @@ class ReadTool:
             raise ToolInputError(
                 f"File does not exist or is not a regular file: {file_path}"
             )
-
         suffix = file_path.suffix.lower()
 
         if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
@@ -818,14 +828,12 @@ class ReadTool:
                 pages=pages,
                 mode=mode,
             )
-
         elif suffix == ".ipynb":
             read_result = _read_notebook(
                 file_path,
                 offset=offset,
                 limit=limit,
             )
-
         else:
             read_result = _read_text(
                 file_path,

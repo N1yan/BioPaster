@@ -181,12 +181,14 @@ class EditTool:
         return ToolResult(
             name="Edit",
             output=[{
-                "type":"text",
-                "content":{
-                "file_path": str(path),
-                "old_string": old_string,
-                "new_string": new_string,
-                "diff_lines": diff_lines,
-                "replace_all": bool(replace_all),}
+                "type": "text",
+                "content": {
+                    "old_string": old_string,
+                    "new_string": new_string,
+                    "diff_lines": diff_lines,
+                },
+                "metadata": {
+                    "file_path": str(path),
+                    "replace_all": bool(replace_all),
+                },
             }])
-        
