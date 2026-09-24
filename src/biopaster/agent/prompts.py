@@ -19,7 +19,7 @@ ANALYSIS_CODE_PROMPT = """
     Follow these instructions whenever performing a scientific analysis.
     For established analytical methods, assume that you know the general direction
     and workflow but need to verify implementation details. Consult relevant
-    tutorials before writing analysis code or choosing parameters.
+    tutorials (including skills) before writing analysis code or choosing parameters.
 
     This requirement applies to methods and choices that affect scientific
     judgment. Mechanical operations, such as file I/O, directory operations, or

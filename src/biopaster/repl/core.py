@@ -21,6 +21,7 @@ from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.defaults import build_default_registry
 
 from biopaster.agent.session_log import SessionLog
+from .execution_view import ExecutionView
 from biopaster.tool_system.permissions import (
     PermissionRequest,
     PermissionAnswer,
@@ -44,6 +45,8 @@ def build_prompt_session(commands: list[str]) -> PromptSession:
         complete_while_typing=True,
         style=Style.from_dict({
             "prompt": "bold cyan",
+            "scrollbar.background": "bg:#333333",
+            "scrollbar.button": "bg:#6B9AC4",
         }),
     )
 
@@ -104,6 +107,7 @@ class BioPasterStreamingREPL:
         self.stream = True
         self.multiline_mode = False
         self._current_status = None
+        self._execution_view = None
 
         self.commands = [
             "/help",
@@ -156,6 +160,8 @@ class BioPasterStreamingREPL:
     - `/multiline` — Toggle multiline input mode
     - `/exit` — Exit BioPaster
     - `/quit` — Exit BioPaster
+    - `Ctrl+O` — Expand/collapse the current request's execution details
+    - `PgUp` / `PgDn` — Scroll execution details or the final answer
     """
             ))
             return True
@@ -184,6 +190,8 @@ class BioPasterStreamingREPL:
         self,
         request: PermissionRequest,
     ) -> PermissionAnswer:
+        if self._execution_view is not None:
+            return self._execution_view.ask_permission(request)
         answer = self._ask_permission_impl(request)
         if self._current_status is not None:
             self._current_status.start()
@@ -345,7 +353,6 @@ class BioPasterStreamingREPL:
                         Text(
                             "Auto mode lets a model approve operations that "
                             "would otherwise require confirmation. "
-                            "Review requests may incur API charges. "
                             "Model approval is not sandbox protection. "
                             "Explicit ask and deny rules remain effective.",
                             style="yellow",
@@ -421,113 +428,74 @@ class BioPasterStreamingREPL:
         )
         self.console.print()
 
+    def _close_execution_view(self) -> None:
+        view = self._execution_view
+        if view is None:
+            return
+        view.close()
+        self._execution_view = None
+        self.console.print("\n[bold cyan]BioPaster :[/bold cyan]")
+        if view.result:
+            self.console.print(Markdown(view.result))
+        for error in view.errors:
+            self.console.print(Text(error, style="red"))
+        self.console.print()
+
+    def _read_input(self, prompt_text: str) -> str:
+        if self._execution_view is None:
+            return self.prompt_session.prompt(prompt_text, multiline=self.multiline_mode)
+        user_input = self._execution_view.read_next()
+        self._close_execution_view()
+        self.console.print(Text.assemble((prompt_text, "bold cyan"), user_input))
+        return user_input
+
     def chat(self, user_input: str) -> None:
+        self._close_execution_view()
         self.conversation.add_user_message(user_input)
-        latest_text = ""
-        replace_text_on_next_chunk = False
-
-        def update_status(message: str) -> None:
-            if self._current_status is not None:
-                display = Text()
-                if latest_text.strip():
-                    display.append(latest_text.rstrip())
-                    display.append("\n")
-                display.append(message, style="dim")
-                self._current_status.update(display)
-
-        def on_text_chunk(chunk: str) -> None:
-            nonlocal latest_text, replace_text_on_next_chunk
-            if not chunk:
-                return
-
-            if replace_text_on_next_chunk:
-                latest_text = ""
-                replace_text_on_next_chunk = False
-            latest_text += chunk
-            update_status("Preparing response...")
+        view = ExecutionView(self.prompt_session, multiline=self.multiline_mode)
+        self._execution_view = view
 
         def on_event(event: ToolEvent | ResultEvent) -> None:
-            nonlocal replace_text_on_next_chunk
             self.session_log.record("agent_event", event)
-            
             if isinstance(event, ResultEvent):
-                if self._current_status is not None:
-                    self._current_status.stop()
-                if event.result:
-                    self.console.print(Markdown(event.result))
-                if event.is_error:
-                    for error in event.errors:
-                        self.console.print(
-                            Text(error, style="red")
-                        )
-                return
-
-            if event.kind == "tool_use":
-                replace_text_on_next_chunk = True
-                update_status(f"{event.tool_name} · Running...")
-                return
-
-            if event.kind == "tool_result":
-                if event.is_error:
-                    update_status(f"{event.tool_name} · Failed")
-                    self.console.print(
-                        f"[red]  ↳ {event.tool_name} failed[/red]"
-                    )
-                    self.console.print(event.tool_output, markup=False)
-                else:
-                    update_status(f"{event.tool_name} · Completed. Continuing...")
-                return
-
-            if event.kind == "tool_error":
-                update_status(f"{event.tool_name} · Failed")
-                self.console.print(
-                    f"[red]  ↳ {event.error or 'Error'}[/red]"
-                )
-
-        self.console.print("\n[bold cyan]BioPaster :[/bold cyan]")
-        self._current_status = self.console.status(
-            "[dim]Thinking...[/dim]",
-            spinner="dots3",
-            spinner_style="bright_cyan",
-        )
+                view.finish(event.result, event.errors if event.is_error else [])
+            else:
+                view.tool_event(event)
 
         try:
-            with self._current_status:
-                result = agent_loop(
-                    conversation=self.conversation,
-                    provider=self.provider,
-                    tool_registry=self.tool_registry,
-                    tool_context=self.tool_context,
-                    max_turns=500,
-                    stream=self.stream,
-                    on_text_chunk=on_text_chunk,
-                    on_event=on_event,
-                )
+            view.start()
+            result = agent_loop(
+                conversation=self.conversation,
+                provider=self.provider,
+                tool_registry=self.tool_registry,
+                tool_context=self.tool_context,
+                max_turns=500,
+                stream=self.stream,
+                on_text_chunk=view.append_text,
+                on_event=on_event,
+            )
         except (KeyboardInterrupt, EOFError) as e:
             self.session_log.record_exception("run_interrupted", e)
             self.session_log.end_run("interrupted")
-            self.console.print("\n[yellow]Interrupted.[/yellow]")
-            return
+            view.finish(errors=[f"Display error: {view.failure}" if view.failure else "Interrupted."])
         except Exception as e:
             self.session_log.record_exception("run_exception", e)
             self.session_log.end_run("failed")
-            self.console.print(
-                Text(f"Error: {e}", style="red")
-            )
-            return
+            view.finish(errors=[f"Error: {e}"])
         else:
             self.session_log.record("agent_return", result)
             self.session_log.end_run("returned")
-        finally:
-            if self._current_status is not None:
-                self._current_status.stop()
-            self._current_status = None
-            
-        self.console.print()
+            if view.running:
+                view.finish(result.response_text)
 
     def run(self) -> None:
         self._print_startup_header()
+        try:
+            self._run_loop()
+        finally:
+            self._close_execution_view()
 
+    def _run_loop(self) -> None:
         while True:
             try:
                 prompt_text = (
@@ -535,11 +503,9 @@ class BioPasterStreamingREPL:
                     if self.multiline_mode
                     else "❯ "
                 )
-                user_input = self.prompt_session.prompt(
-                    prompt_text,
-                    multiline=self.multiline_mode,
-                )
+                user_input = self._read_input(prompt_text)
             except KeyboardInterrupt:
+                self._close_execution_view()
                 self.console.print(
                     "\n[yellow]Interrupted. "
                     "Type /exit or /quit to quit.[/yellow]"
@@ -547,6 +513,7 @@ class BioPasterStreamingREPL:
                 self.multiline_mode = False
                 continue
             except EOFError:
+                self._close_execution_view()
                 self.console.print("\n[blue]Goodbye![/blue]")
                 break
 

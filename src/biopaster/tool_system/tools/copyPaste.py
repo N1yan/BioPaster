@@ -175,7 +175,7 @@ class CopyPasteTool:
         copied += source_content[start_index:end_index] + "\n\n"
         
         annotation = f"#{"-"*20}Annotation{"-"*20}\n"
-        annotation += f"# PURPOSE: {metadata.get('usage')}\n" if metadata.get("usage", "") else ""
+        annotation += f"# Purpose: {metadata.get('usage')}\n" if metadata.get("usage", "") else ""
         annotation += f"# URL: {metadata.get('url')}\n" if metadata.get("url", "") else ""
         annotation += f"# Local Evidence File: {source_path.name}\n" # if source_path.suffix.lower() == ".pdf" else ""
         annotation += f"# Title: {metadata.get('title')}\n" if metadata.get("title", "") else ""
