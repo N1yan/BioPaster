@@ -184,6 +184,15 @@ class BioPasterStreamingREPL:
         self,
         request: PermissionRequest,
     ) -> PermissionAnswer:
+        answer = self._ask_permission_impl(request)
+        if self._current_status is not None:
+            self._current_status.start()
+        return answer
+
+    def _ask_permission_impl(
+        self,
+        request: PermissionRequest,
+    ) -> PermissionAnswer:
         if self._current_status is not None:
             self._current_status.stop()
 
@@ -414,70 +423,63 @@ class BioPasterStreamingREPL:
 
     def chat(self, user_input: str) -> None:
         self.conversation.add_user_message(user_input)
+        latest_text = ""
+        replace_text_on_next_chunk = False
 
-        renderer = StreamingMarkdownRenderer(
-            console=self.console,
-            refresh_per_second=10,
-        )
-        visible_output_started = False
-
-        def _stop_status_once() -> None:
-            nonlocal visible_output_started
-
-            if visible_output_started:
-                return
-
-            visible_output_started = True
+        def update_status(message: str) -> None:
             if self._current_status is not None:
-                try:
-                    self._current_status.stop()
-                except Exception:
-                    pass
+                display = Text()
+                if latest_text.strip():
+                    display.append(latest_text.rstrip())
+                    display.append("\n")
+                display.append(message, style="dim")
+                self._current_status.update(display)
 
         def on_text_chunk(chunk: str) -> None:
+            nonlocal latest_text, replace_text_on_next_chunk
             if not chunk:
                 return
 
-            _stop_status_once()
-            renderer.append(chunk)
+            if replace_text_on_next_chunk:
+                latest_text = ""
+                replace_text_on_next_chunk = False
+            latest_text += chunk
+            update_status("Preparing response...")
 
-        def on_event(event: ToolEvent) -> None:
+        def on_event(event: ToolEvent | ResultEvent) -> None:
+            nonlocal replace_text_on_next_chunk
             self.session_log.record("agent_event", event)
-            _stop_status_once()
-            # A tool line must not be inserted into a Markdown block.
-            renderer.finish()
             
             if isinstance(event, ResultEvent):
+                if self._current_status is not None:
+                    self._current_status.stop()
+                if event.result:
+                    self.console.print(Markdown(event.result))
                 if event.is_error:
                     for error in event.errors:
                         self.console.print(
                             Text(error, style="red")
                         )
-                elif not self.stream and event.result:
-                    self.console.print(Markdown(event.result))
                 return
 
             if event.kind == "tool_use":
-                self.console.print(
-                    f"[dim]•[/dim] "
-                    f"[cyan]{event.tool_name}[/cyan] "
-                    "[dim]running...[/dim]"
-                )
+                replace_text_on_next_chunk = True
+                update_status(f"{event.tool_name} · Running...")
                 return
 
             if event.kind == "tool_result":
                 if event.is_error:
+                    update_status(f"{event.tool_name} · Failed")
                     self.console.print(
                         f"[red]  ↳ {event.tool_name} failed[/red]"
                     )
                     self.console.print(event.tool_output, markup=False)
                 else:
-                    self.console.print(
-                        f"[dim]  ↳ {event.tool_name} completed[/dim]"
-                    )
+                    update_status(f"{event.tool_name} · Completed. Continuing...")
                 return
 
             if event.kind == "tool_error":
+                update_status(f"{event.tool_name} · Failed")
                 self.console.print(
                     f"[red]  ↳ {event.error or 'Error'}[/red]"
                 )
@@ -517,7 +519,8 @@ class BioPasterStreamingREPL:
             self.session_log.record("agent_return", result)
             self.session_log.end_run("returned")
         finally:
-            renderer.finish()
+            if self._current_status is not None:
+                self._current_status.stop()
             self._current_status = None
             
         self.console.print()
