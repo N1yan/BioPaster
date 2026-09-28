@@ -12,6 +12,7 @@ import asyncio
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 TIMEOUT = 60
+HTTP_ACCEPT = "text/html, text/plain;q=0.9, text/markdown;q=0.8, */*;q=0.1"
 
 
 def _fallback_html_text(html: str) -> str:
@@ -90,7 +91,7 @@ def _extract_url_content_http(url: str) -> str:
             url,
             headers={
                 "User-Agent": USER_AGENT,
-                "Accept": "text/markdown, text/html, */*",
+                "Accept": HTTP_ACCEPT,
             },
         )
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:

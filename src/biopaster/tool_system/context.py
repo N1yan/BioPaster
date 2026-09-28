@@ -20,7 +20,6 @@ class ToolContext:
    todos: list[dict[str, Any]] = field(default_factory=list)
    tools: list[str] = field(default_factory=list)
    notebook_path: Path | None = None
-   kernels: dict[str, Any] = field(default_factory=dict)
    session_log: SessionLog | None = None
    active_tool_use_id: str | None = None
 

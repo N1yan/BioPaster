@@ -15,7 +15,7 @@ from rich.text import Text
 
 from biopaster.agent.agent_loop import ToolEvent, ResultEvent, agent_loop
 from biopaster.agent.conversation import Conversation
-from biopaster.config import get_provider_config
+from biopaster.config import get_configured_notebook_kernels, get_provider_config
 from biopaster.providers import get_provider_class
 from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.defaults import build_default_registry
@@ -134,7 +134,8 @@ class BioPasterStreamingREPL:
         self.session_log = SessionLog(Path.home() / ".biopaster" / "sessions")
         self.provider.session_log = self.session_log
 
-        self.tool_registry = build_default_registry()
+        notebook_kernels = get_configured_notebook_kernels()
+        self.tool_registry = build_default_registry(notebook_kernels)
         self.tool_context = ToolContext(
             workspace_root=Path("/home/yan/test/BioPaster"),
             tools=self.tool_registry.list_tools(),

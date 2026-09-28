@@ -174,24 +174,24 @@ class CopyPasteTool:
         copied = f"#{"-"*20}Copied Content{"-"*20}\n"
         copied += source_content[start_index:end_index] + "\n\n"
         
-        annotation = f"#{"-"*20}Annotation{"-"*20}\n"
-        annotation += f"# Purpose: {metadata.get('usage')}\n" if metadata.get("usage", "") else ""
-        annotation += f"# URL: {metadata.get('url')}\n" if metadata.get("url", "") else ""
-        annotation += f"# Local Evidence File: {source_path.name}\n" # if source_path.suffix.lower() == ".pdf" else ""
-        annotation += f"# Title: {metadata.get('title')}\n" if metadata.get("title", "") else ""
-        annotation += f"# Author: {metadata.get('authors')}\n" if metadata.get("authors", "") else ""
-        annotation += f"# Publication Date: {metadata.get('publication_dates')}\n" if metadata.get("publication_dates", "") else ""
-        annotation += f"# Journal: {metadata.get('journal')}\n" if metadata.get("journal", "") else ""
-        annotation += f"# DOI: {metadata.get('doi')}\n" if metadata.get("doi", "") else ""
-        annotation += f"# PMID: {metadata.get('pmid')}\n" if metadata.get("pmid", "") else ""
+        reference = f"#{"-"*20}Reference{"-"*20}\n"
+        reference += f"# Purpose: {metadata.get('usage')}\n" if metadata.get("usage", "") else ""
+        reference += f"# URL: {metadata.get('url')}\n" if metadata.get("url", "") else ""
+        reference += f"# Local Evidence File: {source_path}\n"
+        reference += f"# Title: {metadata.get('title')}\n" if metadata.get("title", "") else ""
+        reference += f"# Author: {metadata.get('authors')}\n" if metadata.get("authors", "") else ""
+        reference += f"# Publication Date: {metadata.get('publication_dates')}\n" if metadata.get("publication_dates", "") else ""
+        reference += f"# Journal: {metadata.get('journal')}\n" if metadata.get("journal", "") else ""
+        reference += f"# DOI: {metadata.get('doi')}\n" if metadata.get("doi", "") else ""
+        reference += f"# PMID: {metadata.get('pmid')}\n" if metadata.get("pmid", "") else ""
         
-        # target_path.write_text(annotation + copied, encoding="utf-8")
+        # target_path.write_text(reference + copied, encoding="utf-8")
         with target_path.open("a", encoding="utf-8") as f:
-            f.write(annotation + copied)
+            f.write(reference + copied)
         
         return ToolResult(
             name="copyPaste",
-            output=[{"type": "text", "content": copied, "metadata": metadata}],
+            output=[{"type": "text", "content": reference + copied, "metadata": metadata}],
         )
 
 

@@ -3,7 +3,9 @@ import json
 import re
 import subprocess
 import sys
+import warnings
 from typing import Any
+from jupyter_client.kernelspec import KernelSpecManager
 
 def get_config_path() -> Path:
     config_dir = Path.home() / ".biopaster"
@@ -30,6 +32,11 @@ def get_default_config() -> dict[str, Any]:
         },
         "session": {
             "auto_save": True,
+        },
+        "notebook_kernels": {
+            "python3": {
+                "environment": Path(sys.prefix).name or "current",
+            }
         },
         "NOTEBOOK_ENV": "",
     }
@@ -70,6 +77,63 @@ def get_provider_config(provider: str) -> dict[str, Any]:
         raise ValueError(f"Unknown provider: {provider}")
 
     return providers[provider]
+
+
+def get_configured_notebook_kernels() -> dict[str, dict[str, str]]:
+    """Return configured Jupyter kernels after confirming they are installed."""
+    default = {
+        "python3": {
+            "environment": Path(sys.prefix).name or "current",
+        }
+    }
+    configured = load_config().get("notebook_kernels", default)
+    if isinstance(configured, list):
+        if not configured:
+            raise ValueError("notebook_kernels must not be empty")
+        entries = {name: {} for name in configured}
+    elif isinstance(configured, dict):
+        if not configured:
+            raise ValueError("notebook_kernels must not be empty")
+        entries = configured
+    else:
+        raise ValueError("notebook_kernels must be an object or a list")
+
+    if any(not isinstance(name, str) or not name.strip() for name in entries):
+        raise ValueError("notebook kernel names must be non-empty strings")
+    if any(not isinstance(details, dict) for details in entries.values()):
+        raise ValueError("notebook kernel settings must be objects")
+
+    names = [name.strip() for name in entries]
+    if len(set(names)) != len(names):
+        raise ValueError("notebook_kernels must not contain duplicates")
+
+    installed = KernelSpecManager().get_all_specs()
+    missing = [name for name in names if name not in installed]
+    if missing:
+        warnings.warn(
+            "Configured notebook kernels are not installed and will be ignored: "
+            + ", ".join(missing),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    result: dict[str, dict[str, str]] = {}
+    for name in names:
+        if name not in installed:
+            continue
+        spec = installed[name].get("spec", {})
+        result[name] = {
+            "display_name": str(spec.get("display_name") or name),
+            "language": str(spec.get("language") or "unknown"),
+        }
+        environment = entries[name].get("environment")
+        if environment is not None:
+            if not isinstance(environment, str) or not environment.strip():
+                raise ValueError(
+                    f"Environment for notebook kernel {name} must be a non-empty string"
+                )
+            result[name]["environment"] = environment.strip()
+    return result
 
 def kernel_register():
     """Register configured Python, R, and Bash kernels with Jupyter."""
