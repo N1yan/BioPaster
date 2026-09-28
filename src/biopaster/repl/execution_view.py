@@ -71,9 +71,21 @@ class ExecutionView:
         self.thread = threading.Thread(target=self._run, name="biopaster-input", daemon=True)
         self.control = FormattedTextControl(self._render, focusable=False,
                                            get_cursor_position=lambda: Point(0, self.scroll_line))
+        self.header_window = Window(
+            FormattedTextControl(self._render_header, focusable=False),
+            height=1,
+            dont_extend_height=True,
+            always_hide_cursor=True,
+        )
         self.window = Window(self.control, wrap_lines=False, always_hide_cursor=True,
                              height=self._height, dont_extend_height=True,
                              right_margins=[ScrollbarMargin()])
+        self.footer_window = Window(
+            FormattedTextControl(self._render_footer, focusable=False),
+            height=1,
+            dont_extend_height=True,
+            always_hide_cursor=True,
+        )
 
     @property
     def permission_pending(self):
@@ -81,7 +93,28 @@ class ExecutionView:
 
     def _height(self):
         rows = self.session.app.output.get_size().rows
-        return Dimension(min=1, max=max(1, rows - 5 if not self.running else rows // 2))
+        # Header and footer each use one row. Keep the total execution region
+        # within the previous height budget so the input remains visible.
+        return Dimension(min=1, max=max(1, rows - 7 if not self.running else rows // 2 - 2))
+
+    def _separator(self, label):
+        width = max(1, self.session.app.output.get_size().columns - 1)
+        prefix = "── "
+        text = prefix + label + " "
+        return text[:width] + "─" * max(0, width - len(text))
+
+    def _render_header(self):
+        return [("class:execution.border", self._separator("Current execution"))]
+
+    def _render_footer(self):
+        with self._lock:
+            if self.permission_pending:
+                label = "Permission required"
+            elif self.expanded:
+                label = "▼ Execution details · Ctrl+O to collapse · PgUp/PgDn to scroll"
+            else:
+                label = "▶ Execution details · Ctrl+O to expand"
+            return [("class:execution.border", self._separator(label))]
 
     def _changed(self):
         self._revision += 1
@@ -168,10 +201,6 @@ class ExecutionView:
                                 parts.append(self._literal(entry["output"]))
                     if self.running:
                         parts.append(Text(f"{'⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[frame]} {self.status}", style="cyan"))
-                    label = "▼ Execution details · Ctrl+O to collapse" if self.expanded else "▶ Execution details · Ctrl+O to expand"
-                    parts.append(Text(label, style="dim"))
-                    if self.expanded:
-                        parts.append(Text("PgUp/PgDn to scroll", style="dim"))
                     if self.result:
                         parts.extend([Text(""), Markdown(self.result, hyperlinks=False)])
                     parts.extend(Text(error, style="red") for error in self.errors)
@@ -288,7 +317,12 @@ class ExecutionView:
         original_erase = session.app.erase_when_done
         self._original_accept = session.default_buffer.accept_handler
         try:
-            container.content = HSplit([self.window, original_content])
+            container.content = HSplit([
+                self.header_window,
+                self.window,
+                self.footer_window,
+                original_content,
+            ])
             session.default_buffer.accept_handler = self._accept
             session.app.erase_when_done = True
             result = session.prompt(

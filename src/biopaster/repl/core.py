@@ -47,6 +47,7 @@ def build_prompt_session(commands: list[str]) -> PromptSession:
             "prompt": "bold cyan",
             "scrollbar.background": "bg:#333333",
             "scrollbar.button": "bg:#6B9AC4",
+            "execution.border": "#6B8299",
         }),
     )
 
