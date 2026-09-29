@@ -13,9 +13,8 @@ import nbformat
 from nbclient import NotebookClient
 from jupyter_client import AsyncKernelManager
 
-REFERENCE_HEADER = "#--------------------Reference--------------------"
-COPIED_CONTENT_HEADER = "#--------------------Copied Content--------------------"
-
+REFERENCE_HEADER = f"#{"-"*20}Reference{"-"*20}\n"
+COPIED_CONTENT_HEADER = f"#{"-"*20}Copied Content{"-"*20}\n"
 
 def _run_notebook_cell(
     code: str,

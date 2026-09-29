@@ -15,7 +15,14 @@ from rich.text import Text
 
 from biopaster.agent.agent_loop import ToolEvent, ResultEvent, agent_loop
 from biopaster.agent.conversation import Conversation
-from biopaster.config import get_configured_notebook_kernels, get_provider_config
+from biopaster.config import (
+    get_configured_notebook_kernels,
+    get_provider_config,
+    load_config,
+)
+from biopaster.mcp.config import parse_mcp_servers
+from biopaster.mcp.manager import open_mcp_tools
+from biopaster.tool_system.registry import ToolRegistry
 from biopaster.providers import get_provider_class
 from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.defaults import build_default_registry
@@ -134,8 +141,8 @@ class BioPasterStreamingREPL:
         self.session_log = SessionLog(Path.home() / ".biopaster" / "sessions")
         self.provider.session_log = self.session_log
 
-        notebook_kernels = get_configured_notebook_kernels()
-        self.tool_registry = build_default_registry(notebook_kernels)
+        self.notebook_kernels = get_configured_notebook_kernels()
+        self.tool_registry = ToolRegistry()
         self.tool_context = ToolContext(
             workspace_root=Path("/home/yan/test/BioPaster"),
             tools=self.tool_registry.list_tools(),
@@ -492,9 +499,50 @@ class BioPasterStreamingREPL:
 
     def run(self) -> None:
         self._print_startup_header()
+
         try:
-            self._run_loop()
+            app_config = load_config()
+            mcp_config = parse_mcp_servers(app_config)
+            
+            for server_name, error_message in mcp_config.errors.items():
+                self.console.print(
+                    f"MCP config error for '{server_name}': {error_message}",
+                    style="yellow",
+                    markup=False,
+                )
+                
+            server_configs = mcp_config.servers
+
+            with open_mcp_tools(server_configs) as mcp_startup:
+                self.tool_registry = build_default_registry(
+                    self.notebook_kernels,
+                    extra_tools=mcp_startup.tools.values(),
+                )
+
+                self.tool_context.tools = self.tool_registry.list_tools()
+
+                self.tool_context.mcp_clients = {
+                    server_name: {"connected": True}
+                    for server_name in mcp_startup.connected_servers
+                }
+
+                for server_name, error_type in mcp_startup.errors.items():
+                    self.console.print(
+                        f"MCP server '{server_name}' unavailable: {error_type}",
+                        style="yellow",
+                        markup=False,
+                    )
+
+                self.console.print(
+                    f"MCP tools loaded: {len(mcp_startup.tools)}"
+                )
+
+                self._run_loop()
+
         finally:
+            self.tool_registry = ToolRegistry()
+            self.tool_context.tools = []
+            self.tool_context.mcp_clients = {}
             self._close_execution_view()
 
     def _run_loop(self) -> None:

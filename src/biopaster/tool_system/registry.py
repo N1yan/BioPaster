@@ -65,6 +65,7 @@ class ToolRegistry:
     def list_tools(self) -> list[str]:
         return list(self._by_name.keys())
     
+    
     def dispatch(self, call: ToolCall, context: ToolContext) -> ToolResult:
         tool_name = call.name
 

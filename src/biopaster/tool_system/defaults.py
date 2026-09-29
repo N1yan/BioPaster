@@ -12,11 +12,13 @@ from .tools import (
     ExecuteCodeTool,
     BashTool,
 )
-from .registry import ToolRegistry
-from typing import Any, Mapping
+from .registry import Tool, ToolRegistry
+from typing import Any, Iterable, Mapping
 
 def build_default_registry(
     notebook_kernels: Mapping[str, Mapping[str, Any]] | None = None,
+    *,
+    extra_tools: Iterable[Tool] = (),
 ) -> ToolRegistry:
     tools = [
         WebSearchTool(),
@@ -35,4 +37,6 @@ def build_default_registry(
     tools.append(BashTool())
 
     registry = ToolRegistry(tools=tools)
+    for tool in extra_tools:
+        registry.register(tool)
     return registry
