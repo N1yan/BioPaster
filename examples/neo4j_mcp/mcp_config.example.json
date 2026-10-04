@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "neo4j": {
+      "type": "stdio",
+      "command": "/absolute/path/to/uvx",
+      "args": [
+        "--from",
+        "neo4j-mcp-server==1.6.0",
+        "python",
+        "-m",
+        "neo4j_mcp_server"
+      ],
+      "env": {
+        "NEO4J_MCP_URI": "bolt://localhost:7687",
+        "NEO4J_MCP_USERNAME": "neo4j",
+        "NEO4J_MCP_PASSWORD": "${NEO4J_PASSWORD}",
+        "NEO4J_MCP_DATABASE": "neo4j",
+        "NEO4J_MCP_READ_ONLY": "true",
+        "NEO4J_MCP_TELEMETRY": "false",
+        "NEO4J_MCP_SCHEMA_SAMPLE_SIZE": "100"
+      }
+    }
+  }
+}

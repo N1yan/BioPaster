@@ -1,0 +1,8 @@
+{
+  "trec_2019_trials_context": {
+    "model_name": "BAAI/bge-small-en-v1.5",
+    "normalize_embeddings": true,
+    "bm25_index": "/absolute/path/to/BioPaster/examples/bm25/bm25_index.pkl",
+    "documents_dir": "/absolute/path/to/BioPaster/examples/chroma_mcp/data/trec_pm2019/trial_markdown"
+  }
+}

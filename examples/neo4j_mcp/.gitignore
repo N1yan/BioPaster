@@ -1,0 +1,5 @@
+.env
+data/
+neo4j/
+.ipynb_checkpoints/
+__pycache__/

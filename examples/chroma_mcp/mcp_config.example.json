@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "chroma": {
+      "type": "stdio",
+      "command": "/absolute/path/to/python",
+      "args": [
+        "/absolute/path/to/BioPaster/examples/chroma_mcp/server.py",
+        "--data-dir",
+        "/absolute/path/to/BioPaster/examples/chroma_context_db",
+        "--embedding-profiles",
+        "/absolute/path/to/BioPaster/examples/chroma_mcp/embedding_profiles.json"
+      ]
+    }
+  }
+}

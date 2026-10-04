@@ -1,0 +1,4 @@
+services:
+  neo4j:
+    environment:
+      NEO4J_server_databases_read__only: "neo4j"

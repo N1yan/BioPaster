@@ -1,0 +1,5 @@
+data/
+ddata/
+embedding_profiles.json
+.ipynb_checkpoints/
+__pycache__/

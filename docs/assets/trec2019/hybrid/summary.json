@@ -1,0 +1,108 @@
+{
+  "evaluated_topics": 10,
+  "eligible_topics": 38,
+  "sampling_seed": 42,
+  "selected_topic_ids": [
+    "2",
+    "7",
+    "8",
+    "9",
+    "15",
+    "16",
+    "18",
+    "22",
+    "24",
+    "29"
+  ],
+  "topics_without_judgments": [
+    "32",
+    "33"
+  ],
+  "unselected_topic_ids": [
+    "1",
+    "3",
+    "4",
+    "5",
+    "6",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "17",
+    "19",
+    "20",
+    "21",
+    "23",
+    "25",
+    "26",
+    "27",
+    "28",
+    "30",
+    "31",
+    "34",
+    "35",
+    "36",
+    "37",
+    "38",
+    "39",
+    "40"
+  ],
+  "trials": 8567,
+  "vector_chunks": 43459,
+  "collection": "trec_2019_trials_context",
+  "model": "BAAI/bge-small-en-v1.5",
+  "normalize_embeddings": true,
+  "vector_candidate_trials": 100,
+  "bm25_candidate_trials": 100,
+  "vector_chunk_fetch": "start at 100; double until 100 unique NCT IDs are available",
+  "precision_ndcg_cutoff": 10,
+  "recall_cutoff": 100,
+  "rrf_weights": [
+    0.5,
+    0.5
+  ],
+  "rrf_c": 60,
+  "bm25_token_pattern": "[a-z0-9]+",
+  "bm25_lowercase": true,
+  "ndcg_gain": "2^grade - 1",
+  "unjudged_gain": 0,
+  "recall_aggregation": "mean of per-topic relevant_at_100 / relevant_total",
+  "metrics": [
+    {
+      "method": "Vector",
+      "p10": 0.48,
+      "ndcg10": 0.435636435284714,
+      "recall100": 0.3869423647442829
+    },
+    {
+      "method": "BM25",
+      "p10": 0.63,
+      "ndcg10": 0.5725556800680892,
+      "recall100": 0.42366913108799864
+    },
+    {
+      "method": "Hybrid RRF",
+      "p10": 0.5900000000000001,
+      "ndcg10": 0.5394018863995231,
+      "recall100": 0.4420281573325747
+    }
+  ],
+  "hybrid_vs_vector_topics": {
+    "improved": 6,
+    "worse": 1,
+    "unchanged": 3
+  },
+  "input_sha256": {
+    "topics2019.xml": "6478a0e1798f944997df36e62e57ea4e98fc2a0e018e9892bfeaa98f4d4280b9",
+    "qrels-treceval-trials.38.txt": "983e0ac9391c5acfb981a3b6c129857a21c83d7bb1c77ebc54d92dcea4e502fa",
+    "bm25_index.pkl": "551b454a8008e0c4799409d3fa5b978448f81964a59d7accb7872e2420cb148c"
+  },
+  "versions": {
+    "chromadb": "1.5.9",
+    "langchain-chroma": "1.1.0",
+    "langchain-community": "0.4.2",
+    "langchain-classic": "1.0.8",
+    "rank-bm25": "0.2.2"
+  }
+}
