@@ -73,6 +73,7 @@ class ToolPermissionContext:
     workspace_root: Path | None = None
     mode: Literal["default", "auto"] = "default"
     additional_working_directories: tuple[Path, ...] = ()
+    readonly_directories: tuple[Path, ...] = ()
     permission_handler: Callable[
         [PermissionRequest], PermissionAnswer
       ] | None = field(
@@ -103,7 +104,12 @@ class ToolPermissionContext:
               raise ValueError(f"Unsupported permission mode: {self.mode}")
         if self.workspace_root is not None:
             self.workspace_root = _resolve_path(self.workspace_root)
-
+            
+        self.readonly_directories = tuple(
+            _resolve_path(path)
+            for path in self.readonly_directories
+        )
+        
         self.additional_working_directories = tuple(
             _resolve_path(path)
             for path in self.additional_working_directories
@@ -281,6 +287,27 @@ class ToolPermissionContext:
                 return PermissionDecision(
                     behavior="allow",
                     reason="Path is within an allowed working directory.",
+                )
+                
+        if (
+            target.tool_name.lower() == "read"
+            and target.rule_content is not None
+        ):
+            path = Path(target.rule_content)
+
+            if not path.is_absolute():
+                raise ValueError(
+                    "File permission targets must use absolute paths."
+                )
+
+            if any(
+                _is_within(path, root)
+                and _is_within(path.resolve(), root)
+                for root in self.readonly_directories
+            ):
+                return PermissionDecision(
+                    behavior="allow",
+                    reason="Path is within an allowed read-only directory.",
                 )
 
         return PermissionDecision(

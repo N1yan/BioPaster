@@ -501,10 +501,27 @@ class BioPasterStreamingREPL:
 
     def run(self) -> None:
         self._print_startup_header()
+        user_skills_dir = (
+            Path.home() / ".biopaster" / "skills"
+        ).resolve()
+
         skills, diagnostics = discover_skills(
-            workspace_root=self.tool_context.workspace_root
+            workspace_root=self.tool_context.workspace_root,
+            user_skills_dir=user_skills_dir,
         )
         self.tool_context.skills = skills
+
+        permissions = self.tool_context.permission_context
+        permissions.readonly_directories = tuple(dict.fromkeys(
+            (*permissions.readonly_directories, user_skills_dir)
+        ))
+
+        for message in diagnostics:
+            self.console.print(
+                f"Skill discovery warning: {message}",
+                style="yellow",
+                markup=False,
+            )
 
         try:
             app_config = load_config()
