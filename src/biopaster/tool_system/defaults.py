@@ -12,9 +12,15 @@ from .tools import (
     ExecuteCodeTool,
     BashTool,
     SkillTool,
+    TaskCreateTool,
+    TaskGetTool,
+    TaskListTool,
+    TaskUpdateTool,
 )
 from .registry import Tool, ToolRegistry
 from typing import Any, Iterable, Mapping
+
+
 
 def build_default_registry(
     notebook_kernels: Mapping[str, Mapping[str, Any]] | None = None,
@@ -33,6 +39,10 @@ def build_default_registry(
         WriteTool(),
         EditTool(),
         SkillTool(),
+        TaskCreateTool(),
+        TaskGetTool(),
+        TaskListTool(),
+        TaskUpdateTool(),
     ]
     if notebook_kernels is None or notebook_kernels:
         tools.append(ExecuteCodeTool(notebook_kernels))

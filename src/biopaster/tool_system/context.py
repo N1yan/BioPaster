@@ -9,6 +9,7 @@ from .permissions import (
 from ..agent.session_log import SessionLog
 import os
 from ..skills.model import Skill
+from ..tasks.store import TaskStore
 
 
 @dataclass
@@ -24,6 +25,7 @@ class ToolContext:
    notebook_path: Path | None = None
    session_log: SessionLog | None = None
    active_tool_use_id: str | None = None
+   task_store: TaskStore | None = None
 
    def __post_init__(self):
       self.workspace_root = Path(self.workspace_root).resolve()

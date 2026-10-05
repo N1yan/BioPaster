@@ -38,6 +38,7 @@ import json
 from biopaster.agent.prompts import PERMISSION_REVIEW_SYSTEM_PROMPT
 from biopaster.tool_system.permission_reviewer import review_permission
 from biopaster.skills.loader import discover_skills
+from biopaster.tasks.store import TaskStore
 
 
 
@@ -160,6 +161,18 @@ class BioPasterStreamingREPL:
         self.tool_context.permission_context.review_handler = (
             self._review_permission
         )
+        
+        task_store = TaskStore(
+            Path.home()
+            / ".biopaster"
+            / "tasks"
+            / self.session_log.session_id
+            / "tasks.json"
+        )
+
+        task_store.initialize()
+        self.tool_context.task_store = task_store
+                
 
     def _handle_command(self, command: str) -> bool:
         if command == "/help":

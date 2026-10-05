@@ -11,6 +11,15 @@ from .edit import EditTool
 from .executeCode import ExecuteCodeTool
 from .bash import BashTool
 from .skill import SkillTool
+from .tasks import (
+    TaskCreateTool,
+    TaskGetTool,
+    TaskListTool,
+    TaskUpdateTool,
+)
+
+
+
 
 __all__ = [
     "WebSearchTool",
@@ -26,4 +35,8 @@ __all__ = [
     "ExecuteCodeTool",
     "BashTool",
     "SkillTool",
+    "TaskCreateTool",
+    "TaskGetTool",
+    "TaskListTool",
+    "TaskUpdateTool",
 ]

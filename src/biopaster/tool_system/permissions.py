@@ -241,6 +241,18 @@ class ToolPermissionContext:
                         ),
                         matched_rule=rule,
                     )
+                    
+        if target.tool_name.lower() in {
+            "taskcreate",
+            "taskget",
+            "taskupdate",
+            "tasklist",
+        }:
+            return PermissionDecision(
+                behavior="allow",
+                reason="Internal task management is allowed by default.",
+            )
+            
         if (
             target.tool_name.lower() == "skill"
             and target.rule_content is not None
