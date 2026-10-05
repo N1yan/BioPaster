@@ -17,7 +17,7 @@ from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from prompt_toolkit.formatted_text.utils import split_lines, fragment_list_to_text
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
-from prompt_toolkit.layout import FloatContainer, HSplit, Window
+from prompt_toolkit.layout import ConditionalContainer, FloatContainer, HSplit, Window
 from prompt_toolkit.layout.layout import walk
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
@@ -39,7 +39,7 @@ class ExecutionView:
     changes are restored when the next question is submitted or the view closes.
     """
 
-    def __init__(self, session, *, multiline=False, interrupt=None):
+    def __init__(self, session, *, multiline=False, interrupt=None, task_store=None):
         self.session = session
         self._container = next(c for c in walk(session.app.layout.container)
                                if isinstance(c, FloatContainer))
@@ -59,6 +59,9 @@ class ExecutionView:
         self._fragments = []
         self._line_count = 1
         self._lock = threading.RLock()
+        self.task_store = task_store
+        self._task_lines = []  # Display snapshot, never an editable task store.
+        self.tasks_expanded = False
         self._ready = threading.Event()
         self._closed = False
         self._closing = False
@@ -86,6 +89,67 @@ class ExecutionView:
             dont_extend_height=True,
             always_hide_cursor=True,
         )
+        self.tasks_window = ConditionalContainer(
+            Window(
+                FormattedTextControl(self._render_tasks, focusable=False),
+                height=lambda: len(self._visible_task_lines()),
+                wrap_lines=False,
+                dont_extend_height=True,
+                always_hide_cursor=True,
+            ),
+            filter=Condition(lambda: bool(self._task_lines)),
+        )
+
+    def refresh_tasks(self):
+        """Refresh from storage on events, not on every rendering frame."""
+        lines = []
+        if self.task_store is not None:
+            try:
+                tasks = self.task_store.list_tasks()
+                if tasks:
+                    by_id = {task.id: task for task in tasks}
+                    done = sum(task.status == "completed" for task in tasks)
+                    title = f"Tasks · {done}/{len(tasks)} completed"
+                    if done == len(tasks):
+                        title += " · All completed"
+                    lines.append(("bold ansicyan", title))
+                    for task in sorted(tasks, key=lambda task: int(task.id)):
+                        icon, style = {
+                            "pending": ("○", ""),
+                            "in_progress": ("→", "ansicyan"),
+                            "completed": ("✓", "ansigreen"),
+                        }[task.status]
+                        subject = " ".join(task.subject.split())
+                        subject = "".join(c for c in subject if c.isprintable())
+                        text = f"  {icon} #{task.id} {subject}"
+                        blockers = [key for key in task.blockedBy
+                                    if key not in by_id or by_id[key].status != "completed"]
+                        if blockers and task.status != "completed":
+                            text += " · Waiting for " + ", ".join(f"#{key}" for key in blockers)
+                        lines.append((style, text))
+            except Exception:
+                lines = [("ansiyellow", "Tasks unavailable: could not read task storage.")]
+        with self._lock:
+            self._task_lines = lines
+            self._changed()
+
+    def _visible_task_lines(self):
+        with self._lock:
+            if not self._task_lines or self.permission_pending:
+                return []
+            style, title = self._task_lines[0]
+            if self.tasks_expanded:
+                return [(style, "▼ " + title + " · Ctrl+T collapse"),
+                        *self._task_lines[1:]]
+            return [(style, "▶ " + title + " · Ctrl+T expand")]
+
+    def _render_tasks(self):
+        fragments = []
+        for index, (style, text) in enumerate(self._visible_task_lines()):
+            if index:
+                fragments.append(("", "\n"))
+            fragments.append((style, text))
+        return fragments
 
     @property
     def permission_pending(self):
@@ -95,7 +159,8 @@ class ExecutionView:
         rows = self.session.app.output.get_size().rows
         # Header and footer each use one row. Keep the total execution region
         # within the previous height budget so the input remains visible.
-        return Dimension(min=1, max=max(1, rows - 7 if not self.running else rows // 2 - 2))
+        budget = rows - 7 if not self.running else rows // 2 - 2
+        return Dimension(min=1, max=max(1, budget - len(self._visible_task_lines())))
 
     def _separator(self, label):
         width = max(1, self.session.app.output.get_size().columns - 1)
@@ -225,15 +290,25 @@ class ExecutionView:
                 if self.permission_pending:
                     return
                 self.expanded = not self.expanded
+                self.tasks_expanded = False
                 self.follow_tail = self.running
                 if not self.running:
                     self.scroll_line = 0
                 self._changed()
 
-        @bindings.add("escape", filter=Condition(lambda: self.expanded and not self.permission_pending))
+        @bindings.add("c-t", filter=Condition(lambda: bool(self._task_lines) and not self.permission_pending))
+        def toggle_tasks(event):
+            with self._lock:
+                self.tasks_expanded = not self.tasks_expanded
+                if self.tasks_expanded:
+                    self.expanded = False
+                self._changed()
+
+        @bindings.add("escape", filter=Condition(lambda: (self.expanded or self.tasks_expanded) and not self.permission_pending))
         def collapse(event):
             with self._lock:
                 self.expanded = False
+                self.tasks_expanded = False
                 self.follow_tail = self.running
                 self.scroll_line = 0
                 self._changed()
@@ -321,6 +396,7 @@ class ExecutionView:
                 self.header_window,
                 self.window,
                 self.footer_window,
+                self.tasks_window,
                 original_content,
             ])
             session.default_buffer.accept_handler = self._accept

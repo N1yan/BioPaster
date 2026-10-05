@@ -476,8 +476,13 @@ class BioPasterStreamingREPL:
     def chat(self, user_input: str) -> None:
         self._close_execution_view()
         self.conversation.add_user_message(user_input)
-        view = ExecutionView(self.prompt_session, multiline=self.multiline_mode)
+        view = ExecutionView(
+            self.prompt_session,
+            multiline=self.multiline_mode,
+            task_store=self.tool_context.task_store,
+        )
         self._execution_view = view
+        view.refresh_tasks()
 
         def on_event(event: ToolEvent | ResultEvent) -> None:
             self.session_log.record("agent_event", event)
@@ -485,6 +490,13 @@ class BioPasterStreamingREPL:
                 view.finish(event.result, event.errors if event.is_error else [])
             else:
                 view.tool_event(event)
+                if (
+                    event.kind in {"tool_result", "tool_error"}
+                    and event.tool_name.casefold() in {
+                        "taskcreate", "taskget", "taskupdate", "tasklist"
+                    }
+                ):
+                    view.refresh_tasks()
 
         try:
             view.start()

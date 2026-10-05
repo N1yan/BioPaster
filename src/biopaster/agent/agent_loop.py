@@ -182,6 +182,21 @@ def agent_loop(
         )
         
         conversation.messages = compacted_result.messages
+        if tool_context.task_store is not None and compacted_result.was_compacted:
+            try:
+                has_tasks = bool(tool_context.task_store.list_tasks())
+            except Exception as exc:
+                has_tasks = False
+                if tool_context.session_log is not None:
+                    tool_context.session_log.record_exception(
+                        "task_reminder_read_failed", exc
+                    )
+            if has_tasks:
+                conversation.add_user_message(
+                    "The conversation was compacted. Task records are stored separately. "
+                    "When continuing task-related work, call TaskList to retrieve the "
+                    "current task state. Use TaskGet when you need a task's full description."
+                )
              
         api_messages = conversation.get_messages()
 
