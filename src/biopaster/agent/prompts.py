@@ -348,7 +348,13 @@ def assemble_system_prompt(context: ToolContext) -> str:
                 CONTEXT_REMINDER_PROMPT,
                 MEMORY_PROMPT]
     # sections.append(f"Current time: {datetime.now().isoformat(timespec='seconds')}")
-    sections.append("Skills catalog:\n" + "")
+    skills = [f"- {skill.name}: {skill.description}" 
+              for skill in context.skills.values()
+              if not skill.disable_model_invocation]
+    if skills:
+        sections.append(
+            "Skills catalog:\n" + "\n".join(skills)
+        )
     # if context["memories"]:
     #     sections.append(f"Relevant memories:\n{context['memories']}")
     if context.workspace_root:

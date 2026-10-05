@@ -148,11 +148,11 @@ class ToolRegistry:
 
         except (KeyboardInterrupt, EOFError):
             raise
-        except ToolPermissionError as exc:
-            return error_result(f"Tool {tool_name} permission denied: {exc}")
-        except ToolInputError as exc:
-            return error_result(f"Tool {tool_name} invalid input: {exc}")
-        except Exception as exc:
-            return error_result(f"Tool {tool_name} failed: {exc}")
+        except ToolPermissionError as e:
+            return error_result(f"Tool {tool_name} permission denied: {e}")
+        except ToolInputError as e:
+            return error_result(f"Tool {tool_name} invalid input: {e}")
+        except Exception as e:
+            return error_result(f"Tool {tool_name} failed: {e}")
         finally:
               context.active_tool_use_id = previous_tool_use_id

@@ -10,6 +10,7 @@ from .write import WriteTool
 from .edit import EditTool
 from .executeCode import ExecuteCodeTool
 from .bash import BashTool
+from .skill import SkillTool
 
 __all__ = [
     "WebSearchTool",
@@ -24,4 +25,5 @@ __all__ = [
     "EditTool",
     "ExecuteCodeTool",
     "BashTool",
+    "SkillTool",
 ]

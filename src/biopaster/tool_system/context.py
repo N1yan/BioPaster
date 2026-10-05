@@ -8,6 +8,7 @@ from .permissions import (
 )
 from ..agent.session_log import SessionLog
 import os
+from ..skills.model import Skill
 
 
 @dataclass
@@ -18,6 +19,7 @@ class ToolContext:
    read_file_fingerprints: dict[Path, tuple[int, int]] = field(default_factory=dict)
    mcp_clients:dict[str, Any] = field(default_factory=dict)
    todos: list[dict[str, Any]] = field(default_factory=list)
+   skills: dict[str, Skill] = field(default_factory=dict)
    tools: list[str] = field(default_factory=list)
    notebook_path: Path | None = None
    session_log: SessionLog | None = None

@@ -11,6 +11,7 @@ from .tools import (
     EditTool,
     ExecuteCodeTool,
     BashTool,
+    SkillTool,
 )
 from .registry import Tool, ToolRegistry
 from typing import Any, Iterable, Mapping
@@ -31,6 +32,7 @@ def build_default_registry(
         GlobTool(),
         WriteTool(),
         EditTool(),
+        SkillTool(),
     ]
     if notebook_kernels is None or notebook_kernels:
         tools.append(ExecuteCodeTool(notebook_kernels))

@@ -6,14 +6,16 @@ from ..agent.conversation import (
 from copy import deepcopy
 from datetime import datetime
 
-NON_COMPACTABLE_TOOLS = [] # Add tool names that should not be compacted, e.g., ["executecode"]
+NON_COMPACTABLE_TOOLS = ["skill"] # Add tool names that should not be compacted, e.g., ["executecode"]
 CLEARED_CONTENT = "[Old tool result content cleared]"
 
 def _idle_time_calculate(
     messages: list[Message], 
     now: datetime | None = None
     ) -> float:
-    
+    """
+    Calculate the idle time in minutes since the last assistant message.
+    """
     last_assistant = next((message for message in reversed(messages) if message.role == "assistant"), None)
     if last_assistant is None:
         return 0.0
@@ -37,7 +39,9 @@ def micro_compact_messages(
     cache_ttl_minutes: int = 60,
     now: datetime | None = None
     )-> list[Message]:
-    
+    """
+    Compact a list of messages by clearing the content of older tool results.
+    """
     if not messages:
         return messages
 

@@ -41,7 +41,7 @@ class Persist:
         name = (tool_result.name or "").lower()
         outputs = deepcopy(tool_result.output)
 
-        if name == "read":
+        if name in {"read", "skill"}:
             return replace(tool_result, output=outputs)
 
         for index, output in enumerate(outputs):

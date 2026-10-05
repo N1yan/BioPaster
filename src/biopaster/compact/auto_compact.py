@@ -29,6 +29,11 @@ Preserve:
 8. Important user corrections and preferences.
 9. Input data paths and output paths.
 10. Any other information that is important to continue the work.
+11. Preserve only skills needed for the current or remaining work:
+their exact names, SKILL.md paths, relevant arguments, and essential
+requirements or restrictions. Omit skills used solely for completed
+work unless they remain necessary. If detailed instructions are
+needed, note that the skill must be reloaded before proceeding.
 
 Respond in this format:
 

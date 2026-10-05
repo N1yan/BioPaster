@@ -235,7 +235,15 @@ class ToolPermissionContext:
                         ),
                         matched_rule=rule,
                     )
-                    
+        if (
+            target.tool_name.lower() == "skill"
+            and target.rule_content is not None
+        ):
+            return PermissionDecision(
+                behavior="allow",
+                reason="Loading a configured skill is allowed by default.",
+            )
+                            
         if (
             target.tool_name.lower() == "bash"
             and target.rule_content is not None

@@ -167,9 +167,15 @@ class FileDownloadTool:
                         "description": "Directory to save the file. "
                         "If not provided, the file will be saved in the current working directory.",
                     },
-                    "filename": {"type": "string"},
+                   "filename": {
+                        "type": "string",
+                        "description": (
+                            "Exact filename including extension when needed. "
+                            "Must not contain directory separators."
+                        ),
+                    },
                 },
-                "required": ["url"],
+                "required": ["url", "filename"],
             },
             is_read_only=False,
             max_result_size_chars=8_000,
@@ -178,65 +184,136 @@ class FileDownloadTool:
     def prepare_input(self, tool_input, context):
         unknown = set(tool_input) - {"url", "save_dir", "filename"}
         if unknown:
-            raise ToolInputError(f"Unknown parameters: {', '.join(sorted(unknown))}")
-        if not isinstance(tool_input.get("url"), str):
-            raise ToolInputError("url must be a string")
-        for key in ("save_dir", "filename"):
-            if key in tool_input and (not isinstance(tool_input[key], str) or not tool_input[key].strip()):
+            raise ToolInputError(
+                f"Unknown parameters: {', '.join(sorted(unknown))}"
+            )
+
+        for key in ("url", "filename"):
+            value = tool_input.get(key)
+            if not isinstance(value, str) or not value.strip():
                 raise ToolInputError(f"{key} must be a non-empty string")
+
+        if "save_dir" in tool_input:
+            directory = tool_input["save_dir"]
+            if not isinstance(directory, str) or not directory.strip():
+                raise ToolInputError("save_dir must be a non-empty string")
+        else:
+            directory = str(context.cwd)
+
         url = tool_input["url"].strip()
         if not re.match(r"^(https?|ftp)://", url, re.I):
             raise ToolInputError("URL must be http, https, or ftp")
-        directory = tool_input.get("save_dir") or str(context.cwd)
-        paths = context.resolve_permission_paths(directory)
-        if paths[-1].exists() and not paths[-1].is_dir():
+
+        filename = tool_input["filename"]
+        if (
+            filename in {".", ".."}
+            or "/" in filename
+            or "\\" in filename
+            or any(ord(char) < 32 or ord(char) == 127 for char in filename)
+        ):
+            raise ToolInputError(
+                "filename must not contain directory separators "
+                "or control characters"
+            )
+
+        directory_paths = context.resolve_permission_paths(directory)
+        if directory_paths[-1].exists() and not directory_paths[-1].is_dir():
             raise ToolInputError("save_dir is not a directory")
-        return {**tool_input, "url": url, "save_dir": str(paths[-1]), "_directory_paths": paths}
+
+        paths = tuple(dict.fromkeys(
+            candidate
+            for base in directory_paths
+            for candidate in context.resolve_permission_paths(base / filename)
+        ))
+
+        if any(path.name.startswith("BioPaster_evidence_") for path in paths):
+            raise ToolPermissionError(
+                "Downloads cannot overwrite evidence files."
+            )
+
+        if any(path.exists() or path.is_symlink() for path in paths):
+            raise ToolInputError(f"File already exists: {paths[-1]}")
+
+        return {
+            "url": url,
+            "filename": filename,
+            "path": paths[-1],
+            "_permission_paths": paths,
+        }
 
     def check_permissions(self, tool_input, context):
         name = self.spec().name
-        # The final filename may only become known after receiving HTTP headers.
-        return PermissionRequest(name, None, f"Download: {tool_input['url']}",
-                                 (PermissionTarget(name, None),), (PermissionRule(name),))
 
-    def run(self, tool_input: dict[str, Any], context: ToolContext) -> ToolResult:
+        targets = (
+            PermissionTarget(name, None),
+            *(
+                PermissionTarget("Edit", str(path))
+                for path in tool_input["_permission_paths"]
+            ),
+        )
+
+        return PermissionRequest(
+            tool_name=name,
+            tool_use_id=None,
+            description=(
+                f"Download: {tool_input['url']}\n"
+                f"Save to: {tool_input['path']}"
+            ),
+            targets=targets,
+            suggestions=tuple(
+                PermissionRule(target.tool_name, target.rule_content)
+                for target in targets
+            ),
+        )
+
+    def run(
+        self,
+        tool_input: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolResult:
         url = tool_input["url"]
-        filename = tool_input.get("filename")
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        filename = tool_input["filename"]
+        path: Path = tool_input["path"]
+
+        if path.exists():
+            raise ToolInputError(f"File already exists: {path}")
+
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": USER_AGENT},
+        )
+
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             final_url = resp.geturl()
-            content_type = (resp.headers.get_content_type() or "").lower()
-            disposition = resp.headers.get("Content-Disposition") or ""
-            name = _safe_filename(url, filename, content_type, disposition)
-            paths = tuple(
-                candidate for directory in tool_input["_directory_paths"]
-                for candidate in context.resolve_permission_paths(directory / name)
-            )
-            if any(p.name.startswith("BioPaster_evidence_") for p in paths):
-                raise ToolPermissionError("Downloads cannot overwrite evidence files.")
-            path = paths[-1]
-            if path.exists():
-                raise ToolInputError(f"File already exists: {path}")
-            targets = tuple(PermissionTarget("Edit", str(p)) for p in paths)
-            context.permission_context.authorize(PermissionRequest(
-                self.spec().name, context.active_tool_use_id, f"Save downloaded file: {path}", targets,
-                tuple(PermissionRule(t.tool_name, t.rule_content) for t in targets),
-            ))
+            content_type = (
+                resp.headers.get_content_type() or ""
+            ).lower()
+
             if not _wants_html(url, filename) and _is_html(content_type):
                 raise ToolInputError("Got HTML instead of a file.")
+
             content = resp.read()
+
         if not _wants_html(url, filename) and _is_html(content_type, content):
             raise ToolInputError("Got HTML instead of a file.")
+
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("xb") as file:
             file.write(content)
-        return ToolResult(name=self.spec().name, output=[{
-            "type": "text", "content": "File downloaded successfully",
-            "metadata": {
-                "url": final_url, "path": str(path), "bytes": len(content),
-                "content_type": content_type,
-            },
-        }])
+
+        return ToolResult(
+            name=self.spec().name,
+            output=[{
+                "type": "text",
+                "content": "File downloaded successfully",
+                "metadata": {
+                    "url": final_url,
+                    "path": str(path),
+                    "bytes": len(content),
+                    "content_type": content_type,
+                },
+            }],
+        )
 
 
 if __name__ == "__main__":

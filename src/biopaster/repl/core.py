@@ -37,6 +37,8 @@ from biopaster.tool_system.permissions import (
 import json
 from biopaster.agent.prompts import PERMISSION_REVIEW_SYSTEM_PROMPT
 from biopaster.tool_system.permission_reviewer import review_permission
+from biopaster.skills.loader import discover_skills
+
 
 
 def build_prompt_session(commands: list[str]) -> PromptSession:
@@ -499,6 +501,10 @@ class BioPasterStreamingREPL:
 
     def run(self) -> None:
         self._print_startup_header()
+        skills, diagnostics = discover_skills(
+            workspace_root=self.tool_context.workspace_root
+        )
+        self.tool_context.skills = skills
 
         try:
             app_config = load_config()
