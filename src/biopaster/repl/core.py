@@ -13,7 +13,7 @@ from biopaster.agent.session import (
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.current import get_app
-from prompt_toolkit.filters import Condition, has_completions
+from prompt_toolkit.filters import Condition, has_completions, to_filter
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout, HSplit, Window
@@ -33,13 +33,14 @@ from biopaster.agent.agent_loop import ToolEvent, ResultEvent, agent_loop
 from biopaster.agent.conversation import Conversation, TextContentBlock
 from biopaster.config import (
     get_configured_notebook_kernels,
-    get_provider_config,
+    get_model_options,
+    resolve_model_config,
     load_config,
 )
 from biopaster.mcp.config import parse_mcp_servers
 from biopaster.mcp.manager import open_mcp_tools
 from biopaster.tool_system.registry import ToolRegistry
-from biopaster.providers import get_provider_class
+from biopaster.providers.anthropic_provider import AnthropicProvider
 from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.defaults import build_default_registry
 
@@ -59,11 +60,14 @@ from biopaster.tasks.store import TaskStore
 
 
 
-def select_saved_session(sessions: list[dict], prompt_session) -> str | None:
+def select_saved_session(sessions: list[dict], prompt_session, *,
+                         heading="Resume session · ↑↓ select · Enter resume · Esc cancel",
+                         label_for_item=None, initial_id=None) -> str | None:
     """Select a session without adding a prompt to conversation/history."""
     if not sessions:
         return None
-    selected = 0
+    selected = next((index for index, item in enumerate(sessions)
+                     if item["session_id"] == initial_id), 0)
     bindings = KeyBindings()
 
     @bindings.add("up")
@@ -91,12 +95,16 @@ def select_saved_session(sessions: list[dict], prompt_session) -> str | None:
         for index, item in enumerate(sessions):
             if index:
                 fragments.append(("", "\n"))
-            updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00")).astimezone()
-            title = item.get('title') or item.get('preview') or '(No user text)'
-            title = " ".join(title.split())
-            title = "".join(char for char in title if char.isprintable())
-            label = f"{updated:%m-%d %H:%M}  {title}  · {item['message_count']} messages"
-            fragments.append(("reverse" if index == selected else "", ("❯ " if index == selected else "  ") + label))
+            if label_for_item is not None:
+                label = label_for_item(item)
+            else:
+                updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00")).astimezone()
+                title = item.get('title') or item.get('preview') or '(No user text)'
+                title = " ".join(title.split())
+                label = f"{updated:%m-%d %H:%M}  {title}  · {item['message_count']} messages"
+            label = "".join(char for char in label if char.isprintable())
+            style = "reverse" if index == selected else "bold ansicyan" if item.get("current") else ""
+            fragments.append((style, ("❯ " if index == selected else "  ") + label))
         return fragments
 
     control = FormattedTextControl(render, focusable=True,
@@ -105,7 +113,7 @@ def select_saved_session(sessions: list[dict], prompt_session) -> str | None:
                     right_margins=[ScrollbarMargin()], always_hide_cursor=True)
     app = Application(
         layout=Layout(HSplit([
-            Window(FormattedTextControl("Resume session · ↑↓ select · Enter resume · Esc cancel"), height=1),
+            Window(FormattedTextControl(heading), height=1),
             window,
         ]), focused_element=control),
         key_bindings=bindings,
@@ -129,7 +137,7 @@ def build_prompt_session(commands: list[str]) -> PromptSession:
         "enter",
         eager=True,
         filter=has_completions & Condition(
-            lambda: not bool(session.multiline)
+            lambda: not to_filter(session.multiline)()
             and get_app().current_buffer.text.startswith("/")
         ),
     )
@@ -204,9 +212,10 @@ class StreamingMarkdownRenderer:
 
 
 class BioPasterStreamingREPL:
-    def __init__(self, provider_name: str = "qwen") -> None:
+    def __init__(self) -> None:
         self.console = Console()
-        self.provider_name = provider_name
+        model_config = resolve_model_config(load_config())
+        self.provider_name = model_config["provider"]
         self.stream = True
         self.multiline_mode = False
         self._current_status = None
@@ -218,6 +227,7 @@ class BioPasterStreamingREPL:
             "/permissions",
             "/resume",
             "/new",
+            "/model",
             "/exit",
             "/quit",
         ]
@@ -227,17 +237,8 @@ class BioPasterStreamingREPL:
         self.session_title = None
         self.title_attempted = False
 
-        config = get_provider_config(provider_name)
-        provider_class = get_provider_class(provider_name)
-
         self.conversation = Conversation()
-        self.provider = provider_class(
-            api_key=config["api_key"],
-            base_url=config.get("base_url"),
-            model=config.get("default_model"),
-            context_window=config.get("context_window", 128_000),
-            max_output_tokens=config.get("max_output_tokens"),
-        )
+        self.provider = self._build_provider(model_config)
         
         self.provider.session_log = self.session_log
 
@@ -281,6 +282,7 @@ class BioPasterStreamingREPL:
     - `/multiline` — Toggle multiline input mode
     - `/resume` — Select and resume a saved session
     - `/new` — Save the current conversation and start a new one
+    - `/model` — Select a configured provider and model
     - `/exit` — Exit BioPaster
     - `/quit` — Exit BioPaster
     - `Ctrl+O` — Expand/collapse the current request's execution details
@@ -309,6 +311,13 @@ class BioPasterStreamingREPL:
         
         parts = command.split()
 
+        if parts and parts[0] == "/model":
+            if len(parts) == 1:
+                self._select_model()
+            else:
+                self.console.print("Usage: /model", style="yellow")
+            return True
+
         if parts and parts[0] == "/new":
             if len(parts) == 1:
                 self._new_session()
@@ -328,6 +337,62 @@ class BioPasterStreamingREPL:
                 
         return False
     
+    @staticmethod
+    def _build_provider(option):
+        return AnthropicProvider(
+            api_key=option["api_key"], base_url=option["base_url"],
+            model=option["model"], context_window=option["context_window"],
+            max_output_tokens=option["max_output_tokens"],
+        )
+
+    def _select_model(self) -> None:
+        if self._execution_view is not None and self._execution_view.running:
+            self.console.print("Cannot switch models while a request is running.", style="yellow")
+            return
+        try:
+            options = get_model_options(load_config())
+            entries = [{"session_id": str(index), "option": option}
+                       for index, option in enumerate(options)]
+            current = next((entry["session_id"] for entry in entries
+                            if entry["option"]["provider"] == self.provider_name
+                            and entry["option"]["model"] == self.provider.model), None)
+            for entry in entries:
+                entry["current"] = entry["session_id"] == current
+
+            def label(entry):
+                option = entry["option"]
+                return f"{option['provider']} / {option['model']}"
+
+            selected = select_saved_session(
+                entries, self.prompt_session,
+                heading="Select model · ↑↓ select · Enter switch · Esc cancel",
+                label_for_item=label, initial_id=current,
+            )
+            if selected is None:
+                return
+            option = options[int(selected)]
+            new_provider = self._build_provider(option)
+            new_provider._ensure_client()
+            new_provider.session_log = self.session_log
+        except Exception as exc:
+            self.console.print(f"Unable to select model: {exc}", style="red", markup=False)
+            return
+
+        self.provider = new_provider
+        self.provider_name = option["provider"]
+        try:
+            self.session_log.record("model_switched", {
+                "provider": self.provider_name, "model": self.provider.model,
+                "context_window": self.provider.context_window,
+                "max_output_tokens": self.provider.max_output_tokens,
+            })
+        except Exception:
+            pass
+        if self.conversation.messages:
+            self._autosave_session()
+        self.console.print(f"Model: {self.provider_name} / {self.provider.model}",
+                           style="green", markup=False)
+
     def _new_session(self) -> None:
         """Start an independent conversation without deleting old artifacts."""
         if self._execution_view is not None and self._execution_view.running:

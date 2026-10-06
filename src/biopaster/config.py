@@ -20,14 +20,16 @@ def save_config(config: dict[str, Any]) -> None:
 
 def get_default_config() -> dict[str, Any]:
     return {
-        "default_provider": "openrouter",
+        "default_model": "nvidia/nemotron-3-nano-30b-a3b:free",
         "providers": {
             "openrouter": {
                 "api_key": "",
                 "base_url": "https://openrouter.ai/api",
-                "default_model": "nvidia/nemotron-3-nano-30b-a3b:free",
-                "context_window": 128000,
-                "max_output_tokens": 32000
+                "models": [{
+                    "id": "nvidia/nemotron-3-nano-30b-a3b:free",
+                    "context_window": 128000,
+                    "max_output_tokens": 32000,
+                }],
             }
         },
         "session": {
@@ -77,6 +79,56 @@ def get_provider_config(provider: str) -> dict[str, Any]:
         raise ValueError(f"Unknown provider: {provider}")
 
     return providers[provider]
+
+
+def get_model_options(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read configured models in provider and model declaration order."""
+    providers = config.get("providers", {})
+    if not isinstance(providers, dict) or not providers:
+        raise ValueError("providers must be a non-empty object")
+    options = []
+    for name, connection in providers.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(connection, dict):
+            raise ValueError("Provider names and settings are invalid")
+        for field in ("api_key", "base_url"):
+            if not isinstance(connection.get(field), str) or not connection[field].strip():
+                raise ValueError(f"{name}.{field} must be a non-empty string")
+        models = connection.get("models")
+        if not isinstance(models, list) or not models:
+            raise ValueError(f"{name}.models must be a non-empty list")
+        ids = set()
+        for model in models:
+            if not isinstance(model, dict):
+                raise ValueError(f"{name}.models entries must be objects")
+            model_id = model.get("id")
+            if not isinstance(model_id, str) or not model_id.strip() or model_id in ids:
+                raise ValueError(f"Invalid or duplicate model ID in {name}")
+            ids.add(model_id)
+            window = model.get("context_window", connection.get("context_window", 128000))
+            output = model.get("max_output_tokens", connection.get("max_output_tokens", 32000))
+            if type(window) is not int or type(output) is not int or output < 1 or window <= output:
+                raise ValueError(f"Invalid token budgets for {name}/{model_id}")
+            options.append({
+                "provider": name,
+                "api_key": connection["api_key"],
+                "base_url": connection["base_url"],
+                "model": model_id,
+                "context_window": window,
+                "max_output_tokens": output,
+            })
+    return options
+
+
+def resolve_model_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Select the first connection exposing the global default model."""
+    options = get_model_options(config)
+    default_model = config.get("default_model")
+    if not isinstance(default_model, str) or not default_model.strip():
+        raise ValueError("default_model must be a non-empty string")
+    for option in options:
+        if option["model"] == default_model:
+            return option
+    raise ValueError(f"Default model is not configured: {default_model}")
 
 
 def get_configured_notebook_kernels() -> dict[str, dict[str, str]]:
