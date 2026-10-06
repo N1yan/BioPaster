@@ -134,6 +134,7 @@ def agent_loop(
     stream: bool = True,
     on_text_chunk: Callable | None = None,
     on_event: Callable | None = None,
+    on_checkpoint: Callable[[], None] | None = None,
     )-> AgentLoopResult:
     """Run agent loop: LLM -> tools -> LLM until no more tools or max turns.
     Returns:
@@ -199,8 +200,9 @@ def agent_loop(
                 )
              
         api_messages = conversation.get_messages()
+        if on_checkpoint is not None and compacted_result.was_compacted:
+            on_checkpoint()
 
-         
         response, streamed_live_text = _call_provider_for_turn(
             provider=provider,
             api_messages=api_messages,
@@ -250,7 +252,9 @@ def agent_loop(
                     input=tool_use["input"]
                 ))
         conversation.add_assistant_message(assistant_blocks if assistant_blocks else "")
-        
+        if on_checkpoint is not None:
+            on_checkpoint()
+            
         # tool_uses = response.tool_uses or []
         if not tool_uses:
             if (
@@ -323,28 +327,11 @@ def agent_loop(
                     content=processed_result.output,
                     is_error=processed_result.is_error,
                 )
+                if on_checkpoint is not None:
+                    on_checkpoint()
                             
             except (KeyboardInterrupt, EOFError):
-                for pending_index in range(tool_index, len(tool_uses)):
-                    pending_tool = tool_uses[pending_index]
-
-                    if pending_index == tool_index:
-                        message = (
-                            "Tool call interrupted. Execution may be incomplete; "
-                            "verify the current state before retrying."
-                        )
-                    else:
-                        message = (
-                            "Tool call cancelled because the task was interrupted. "
-                            "This tool call was not executed."
-                        )
-
-                    conversation.add_tool_result_message(
-                        tool_use_id=pending_tool["id"],
-                        content=message,
-                        is_error=True,
-                    )
-
+                conversation.repair_pending_tool_results()
                 raise
 
             except Exception as e:
@@ -367,6 +354,8 @@ def agent_loop(
                     error_str,
                     is_error=True,
                 )
+                if on_checkpoint is not None:
+                    on_checkpoint()
     
     # Reached max turns
     return finish(

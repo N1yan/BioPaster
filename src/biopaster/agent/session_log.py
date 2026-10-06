@@ -1,4 +1,5 @@
 import json
+import re
 import traceback
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -24,18 +25,53 @@ def _serialize(value):
     
     
 class SessionLog:
-    def __init__(self, root: Path):
-        self.session_id = uuid4().hex
+    def __init__(
+        self,
+        root: Path,
+        *,
+        session_id: str | None = None,
+    ):
+        resuming = session_id is not None
+
+        if resuming:
+            if (
+                not isinstance(session_id, str)
+                or re.fullmatch(r"[0-9a-f]{32}", session_id) is None
+            ):
+                raise ValueError("Invalid session ID.")
+
+        self.session_id = session_id if resuming else uuid4().hex
         self.run_id: str | None = None
 
-        self.directory = root / self.session_id
-        self.directory.mkdir(parents=True, exist_ok=False)
+        self.directory = Path(root) / self.session_id
+
+        if resuming:
+            if not self.directory.is_dir():
+                raise FileNotFoundError(
+                    f"Session directory does not exist: {self.directory}"
+                )
+        else:
+            self.directory.mkdir(
+                mode=0o700,
+                parents=True,
+                exist_ok=False,
+            )
 
         self.path = self.directory / "events.jsonl"
-        self.path.touch(mode=0o600, exist_ok=False)
-
         self._lock = Lock()
-        self.record("session_start", {})
+
+        if resuming:
+            log_missing = not self.path.exists()
+            self.path.touch(mode=0o600, exist_ok=True)
+
+            if log_missing:
+                self.record(
+                    "session_log_created",
+                    {"reason": "Log file was missing when opening a saved session."},
+                )
+        else:
+            self.path.touch(mode=0o600, exist_ok=False)
+            self.record("session_start", {})
 
     def record(self, event_type: str, data):
         event = {
@@ -69,6 +105,11 @@ class SessionLog:
                 ),
             },
         )
+    
+    @classmethod
+    def open_existing(cls, root: Path, session_id: str) -> "SessionLog":
+        """Open a saved session's log for subsequent appends."""
+        return cls(root, session_id=session_id)
 
     def start_run(self, user_input: str):
         self.run_id = uuid4().hex

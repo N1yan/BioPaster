@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from datetime import datetime, timezone
 
+from biopaster.agent.session import (
+    SessionSnapshot,
+    save_session,
+    list_sessions,
+    load_session,
+)
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application
+from prompt_toolkit.application.current import get_app
+from prompt_toolkit.filters import Condition, has_completions
+from prompt_toolkit.data_structures import Point
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import Layout, HSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.completion import FuzzyCompleter, WordCompleter
-from prompt_toolkit.history import DummyHistory
+from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.live import Live
@@ -14,7 +30,7 @@ from rich.table import Table
 from rich.text import Text
 
 from biopaster.agent.agent_loop import ToolEvent, ResultEvent, agent_loop
-from biopaster.agent.conversation import Conversation
+from biopaster.agent.conversation import Conversation, TextContentBlock
 from biopaster.config import (
     get_configured_notebook_kernels,
     get_provider_config,
@@ -28,6 +44,7 @@ from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.defaults import build_default_registry
 
 from biopaster.agent.session_log import SessionLog
+from biopaster.agent.session_title import generate_session_title
 from .execution_view import ExecutionView
 from biopaster.tool_system.permissions import (
     PermissionRequest,
@@ -42,17 +59,91 @@ from biopaster.tasks.store import TaskStore
 
 
 
+def select_saved_session(sessions: list[dict], prompt_session) -> str | None:
+    """Select a session without adding a prompt to conversation/history."""
+    if not sessions:
+        return None
+    selected = 0
+    bindings = KeyBindings()
+
+    @bindings.add("up")
+    def previous(event):
+        nonlocal selected
+        selected = max(0, selected - 1)
+
+    @bindings.add("down")
+    def next_item(event):
+        nonlocal selected
+        selected = min(len(sessions) - 1, selected + 1)
+
+    @bindings.add("enter")
+    def accept(event):
+        event.app.exit(result=sessions[selected]["session_id"])
+
+    @bindings.add("escape", eager=True)
+    @bindings.add("c-c")
+    @bindings.add("c-d")
+    def cancel(event):
+        event.app.exit(result=None)
+
+    def render():
+        fragments = []
+        for index, item in enumerate(sessions):
+            if index:
+                fragments.append(("", "\n"))
+            updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00")).astimezone()
+            title = item.get('title') or item.get('preview') or '(No user text)'
+            title = " ".join(title.split())
+            title = "".join(char for char in title if char.isprintable())
+            label = f"{updated:%m-%d %H:%M}  {title}  · {item['message_count']} messages"
+            fragments.append(("reverse" if index == selected else "", ("❯ " if index == selected else "  ") + label))
+        return fragments
+
+    control = FormattedTextControl(render, focusable=True,
+                                   get_cursor_position=lambda: Point(0, selected))
+    window = Window(control, height=min(10, len(sessions)), wrap_lines=False,
+                    right_margins=[ScrollbarMargin()], always_hide_cursor=True)
+    app = Application(
+        layout=Layout(HSplit([
+            Window(FormattedTextControl("Resume session · ↑↓ select · Enter resume · Esc cancel"), height=1),
+            window,
+        ]), focused_element=control),
+        key_bindings=bindings,
+        input=prompt_session.app.input,
+        output=prompt_session.app.output,
+        erase_when_done=True,
+        full_screen=False,
+    )
+    return app.run()
+
+
 def build_prompt_session(commands: list[str]) -> PromptSession:
     command_completer = WordCompleter(
         commands,
         ignore_case=True,
         match_middle=True,
     )
+    bindings = KeyBindings()
 
-    return PromptSession(
-        history=DummyHistory(),
+    @bindings.add(
+        "enter",
+        eager=True,
+        filter=has_completions & Condition(
+            lambda: not bool(session.multiline)
+            and get_app().current_buffer.text.startswith("/")
+        ),
+    )
+    def accept_command_completion(event):
+        buffer = event.current_buffer
+        if buffer.complete_state.current_completion is None:
+            buffer.go_to_completion(0)
+        buffer.validate_and_handle()
+
+    session = PromptSession(
+        history=InMemoryHistory(),
         completer=FuzzyCompleter(command_completer),
         complete_while_typing=True,
+        key_bindings=bindings,
         style=Style.from_dict({
             "prompt": "bold cyan",
             "scrollbar.background": "bg:#333333",
@@ -60,6 +151,7 @@ def build_prompt_session(commands: list[str]) -> PromptSession:
             "execution.border": "#6B8299",
         }),
     )
+    return session
 
 
 class StreamingMarkdownRenderer:
@@ -77,7 +169,7 @@ class StreamingMarkdownRenderer:
         self.refresh_per_second = refresh_per_second
         self.buffer = ""
         self.live: Live | None = None
-
+        
     @property
     def started(self) -> bool:
         return self.live is not None
@@ -124,10 +216,16 @@ class BioPasterStreamingREPL:
             "/help",
             "/multiline",
             "/permissions",
+            "/resume",
+            "/new",
             "/exit",
             "/quit",
         ]
         self.prompt_session = build_prompt_session(self.commands)
+        self.session_log = SessionLog(Path.home() / ".biopaster" / "sessions")
+        self.session_created_at = datetime.now(timezone.utc).isoformat()
+        self.session_title = None
+        self.title_attempted = False
 
         config = get_provider_config(provider_name)
         provider_class = get_provider_class(provider_name)
@@ -141,7 +239,6 @@ class BioPasterStreamingREPL:
             max_output_tokens=config.get("max_output_tokens"),
         )
         
-        self.session_log = SessionLog(Path.home() / ".biopaster" / "sessions")
         self.provider.session_log = self.session_log
 
         self.notebook_kernels = get_configured_notebook_kernels()
@@ -182,6 +279,8 @@ class BioPasterStreamingREPL:
 
     - `/help` — Show available commands
     - `/multiline` — Toggle multiline input mode
+    - `/resume` — Select and resume a saved session
+    - `/new` — Save the current conversation and start a new one
     - `/exit` — Exit BioPaster
     - `/quit` — Exit BioPaster
     - `Ctrl+O` — Expand/collapse the current request's execution details
@@ -207,8 +306,339 @@ class BioPasterStreamingREPL:
         if command == "/permissions":
             self._show_permissions()
             return True
+        
+        parts = command.split()
+
+        if parts and parts[0] == "/new":
+            if len(parts) == 1:
+                self._new_session()
+            else:
+                self.console.print("Usage: /new", style="yellow")
+            return True
+
+        if parts and parts[0] == "/resume":
+            if len(parts) == 1:
+                self._show_sessions()
+            else:
+                self.console.print(
+                    "Usage: /resume (select a session with the arrow keys)",
+                    style="yellow",
+                )
+            return True
                 
         return False
+    
+    def _new_session(self) -> None:
+        """Start an independent conversation without deleting old artifacts."""
+        if self._execution_view is not None and self._execution_view.running:
+            self.console.print("Cannot start a new session while a request is running.", style="yellow")
+            return
+
+        try:
+            if self.conversation.messages:
+                self._save_session_snapshot()
+
+            old_context = self.tool_context
+            new_context = ToolContext(
+                workspace_root=old_context.workspace_root,
+                cwd=old_context.cwd,
+                notebook_path=old_context.notebook_path,
+                skills=dict(old_context.skills),
+                tools=self.tool_registry.list_tools(),
+                mcp_clients=dict(old_context.mcp_clients),
+            )
+            permissions = new_context.permission_context
+            permissions.readonly_directories = old_context.permission_context.readonly_directories
+            permissions.permission_handler = self._ask_permission
+            permissions.review_handler = self._review_permission
+
+            new_log = SessionLog(Path.home() / ".biopaster" / "sessions")
+            new_store = TaskStore(
+                Path.home() / ".biopaster" / "tasks" / new_log.session_id / "tasks.json"
+            )
+            new_store.initialize()
+            new_context.task_store = new_store
+            new_context.session_log = new_log
+            permissions.session_log = new_log
+        except Exception as exc:
+            self.console.print(f"Unable to start a new session: {exc}", style="red", markup=False)
+            return
+
+        self._close_execution_view()
+        self.conversation = Conversation()
+        self.tool_context = new_context
+        self.session_log = new_log
+        self.provider.session_log = new_log
+        self.session_created_at = datetime.now(timezone.utc).isoformat()
+        self.session_title = None
+        self.title_attempted = False
+        self.multiline_mode = False
+        if sys.stdout.isatty():
+            sys.stdout.write("\033[2J\033[3J\033[H")
+            sys.stdout.flush()
+        self._print_startup_header()
+        self.console.print("New conversation started. Existing files and notebook were kept.", style="dim")
+
+    def _prepare_session_restore(
+        self,
+        session_id: str,
+    ) -> tuple[SessionSnapshot, TaskStore, list[str]]:
+        """Load and validate restore candidates without switching sessions."""
+        snapshot = load_session(session_id)
+
+        for label, path in (
+            ("Workspace", snapshot.workspace_root),
+            ("Working directory", snapshot.cwd),
+        ):
+            if not path.is_dir():
+                raise FileNotFoundError(
+                    f"{label} is unavailable or is not a directory: {path}"
+                )
+
+        task_path = (
+            Path.home()
+            / ".biopaster"
+            / "tasks"
+            / snapshot.task_list_id
+            / "tasks.json"
+        )
+
+        task_store = TaskStore(task_path)
+
+        # Validate the existing task file. Do not initialize a new one.
+        task_store.list_tasks()
+
+        repaired_ids = (
+            snapshot.conversation.repair_pending_tool_results()
+        )
+
+        return snapshot, task_store, repaired_ids
+
+    def _resume_session(self, session_id: str) -> None:
+        """Restore conversation and tasks without replaying any operations."""
+        view = self._execution_view
+        if view is not None and view.running:
+            self.console.print(
+                "Cannot resume a session while a request is running.",
+                style="yellow",
+            )
+            return
+
+        if session_id == self.session_log.session_id:
+            self.console.print("This session is already active.")
+            return
+
+        try:
+            # Prepare the candidate without changing the active session.
+            snapshot, task_store, repaired_ids = (
+                self._prepare_session_restore(session_id)
+            )
+
+            user_skills_dir = (
+                Path.home() / ".biopaster" / "skills"
+            ).resolve()
+
+            skills, diagnostics = discover_skills(
+                workspace_root=snapshot.workspace_root,
+                user_skills_dir=user_skills_dir,
+            )
+
+            new_context = ToolContext(
+                workspace_root=snapshot.workspace_root,
+                cwd=snapshot.cwd,
+                notebook_path=snapshot.notebook_path,
+                task_store=task_store,
+                skills=skills,
+                tools=self.tool_registry.list_tools(),
+                mcp_clients=dict(self.tool_context.mcp_clients),
+            )
+
+            permissions = new_context.permission_context
+            permissions.readonly_directories = (user_skills_dir,)
+            permissions.permission_handler = self._ask_permission
+            permissions.review_handler = self._review_permission
+
+            # Do not abandon the current conversation if saving fails.
+            if self.conversation.messages:
+                self._save_session_snapshot()
+
+            new_log = SessionLog.open_existing(
+                Path.home() / ".biopaster" / "sessions",
+                snapshot.session_id,
+            )
+            new_context.session_log = new_log
+            permissions.session_log = new_log
+
+        except Exception as exc:
+            self.console.print(
+                f"Unable to resume session: {type(exc).__name__}: {exc}",
+                style="red",
+                markup=False,
+            )
+            return
+
+        # All preparation succeeded. Switch the active references.
+        self._close_execution_view()
+
+        self.conversation = snapshot.conversation
+        self.session_created_at = snapshot.created_at
+        self.session_title = snapshot.title
+        self.title_attempted = snapshot.title_attempted
+        self.tool_context = new_context
+        self.session_log = new_log
+        self.provider.session_log = new_log
+        if sys.stdout.isatty():
+            # Clear both the visible screen and terminal scrollback on resume.
+            sys.stdout.write("\033[2J\033[3J\033[H")
+            sys.stdout.flush()
+        self._print_startup_header()
+
+        try:
+            new_log.record(
+                "session_resumed",
+                {
+                    "repaired_tool_use_ids": repaired_ids,
+                    "provider": self.provider_name,
+                    "model": self.provider.model,
+                },
+            )
+        except Exception as exc:
+            self.console.print(
+                f"Session resumed, but logging failed: {exc}",
+                style="yellow",
+                markup=False,
+            )
+
+        # self.console.print(
+        #     f"Resumed session: {snapshot.session_id}",
+        #     style="green",
+        #     markup=False,
+        # )
+        # self.console.print(
+        #     f"Workspace: {new_context.workspace_root}",
+        #     markup=False,
+        # )
+        self.console.print(
+            f"Messages: {len(self.conversation.messages)}"
+        )
+        self.console.print(
+            "Kernel variables and temporary permissions were not restored.",
+            style="yellow",
+        )
+
+        if repaired_ids:
+            self.console.print(
+                "Missing tool results were repaired. Verify execution state "
+                "before retrying these calls: " + ", ".join(repaired_ids),
+                style="yellow",
+                markup=False,
+            )
+
+        if (
+            snapshot.notebook_path is not None
+            and not snapshot.notebook_path.exists()
+        ):
+            self.console.print(
+                f"Previous notebook is missing: {snapshot.notebook_path}",
+                style="yellow",
+                markup=False,
+            )
+
+        if (
+            snapshot.provider != self.provider_name
+            or snapshot.model != self.provider.model
+        ):
+            self.console.print(
+                f"Using current provider/model: "
+                f"{self.provider_name}/{self.provider.model}; "
+                f"saved session used {snapshot.provider}/{snapshot.model}.",
+                style="yellow",
+                markup=False,
+            )
+
+        for message in diagnostics:
+            self.console.print(
+                f"Skill discovery warning: {message}",
+                style="yellow",
+                markup=False,
+            )
+        self._show_conversation_history()
+        
+    def _show_conversation_history(self) -> None:
+        """Display restored text without replaying tools or model requests."""
+        self.console.print()
+        self.console.rule("Restored conversation")
+
+        for message in self.conversation.messages:
+            if message._is_internal:
+                continue
+
+            if message.role not in {"user", "assistant"}:
+                continue
+
+            if isinstance(message.content, str):
+                text = message.content
+            else:
+                text = "\n\n".join(
+                    block.text
+                    for block in message.content
+                    if isinstance(block, TextContentBlock)
+                )
+
+            if not text.strip():
+                continue
+
+            if message.role == "user":
+                self.console.print(
+                    Text.assemble(
+                        ("❯ ", "bold cyan"),
+                        text,
+                    )
+                )
+            else:
+                self.console.print("BioPaster:", style="bold cyan")
+                self.console.print(Markdown(text))
+
+            self.console.print()
+
+        self.console.rule("End of restored conversation")
+        self.console.print()
+            
+    def _show_sessions(self) -> None:
+        """Display saved session snapshots without loading them."""
+        try:
+            sessions, diagnostics = list_sessions()
+        except OSError as exc:
+            self.console.print(
+                f"Unable to list sessions: {exc}",
+                style="red",
+                markup=False,
+            )
+            return
+
+        if not sessions:
+            self.console.print(
+                "No recoverable session snapshots found.",
+                style="yellow",
+            )
+
+        for message in diagnostics:
+            self.console.print(
+                f"Session warning: {message}",
+                style="yellow",
+                markup=False,
+        )
+
+        if sessions:
+            sessions.sort(
+                key=lambda item: datetime.fromisoformat(
+                    item["updated_at"].replace("Z", "+00:00")
+                ).timestamp(),
+                reverse=True,
+            )
+            selected = select_saved_session(sessions, self.prompt_session)
+            if selected is not None:
+                self._resume_session(selected)
 
     def _ask_permission(
         self,
@@ -472,10 +902,11 @@ class BioPasterStreamingREPL:
         self._close_execution_view()
         self.console.print(Text.assemble((prompt_text, "bold cyan"), user_input))
         return user_input
-
+    
     def chat(self, user_input: str) -> None:
         self._close_execution_view()
         self.conversation.add_user_message(user_input)
+        self._autosave_session(interrupted=True)
         view = ExecutionView(
             self.prompt_session,
             multiline=self.multiline_mode,
@@ -499,6 +930,7 @@ class BioPasterStreamingREPL:
                     view.refresh_tasks()
 
         try:
+            interrupted = True
             view.start()
             result = agent_loop(
                 conversation=self.conversation,
@@ -509,6 +941,7 @@ class BioPasterStreamingREPL:
                 stream=self.stream,
                 on_text_chunk=view.append_text,
                 on_event=on_event,
+                on_checkpoint=lambda: self._autosave_session(interrupted=True),
             )
         except (KeyboardInterrupt, EOFError) as e:
             self.session_log.record_exception("run_interrupted", e)
@@ -519,10 +952,29 @@ class BioPasterStreamingREPL:
             self.session_log.end_run("failed")
             view.finish(errors=[f"Error: {e}"])
         else:
+            interrupted = False
             self.session_log.record("agent_return", result)
             self.session_log.end_run("returned")
             if view.running:
                 view.finish(result.response_text)
+        finally:
+            self._autosave_session(interrupted=interrupted)
+
+        if not interrupted and result.response_text.strip() and not self.title_attempted:
+            self.title_attempted = True
+            # Persist the attempt before requesting a title; never lose the answer.
+            self._autosave_session()
+            try:
+                self.session_title = generate_session_title(
+                    self.provider, user_input, result.response_text
+                )
+            except (Exception, KeyboardInterrupt, EOFError) as exc:
+                try:
+                    self.session_log.record_exception("session_title_failed", exc)
+                except Exception:
+                    pass
+            finally:
+                self._autosave_session()
 
     def run(self) -> None:
         self._print_startup_header()
@@ -630,3 +1082,74 @@ class BioPasterStreamingREPL:
 
             self.chat(user_input)
             self.multiline_mode = False
+
+
+    def _save_session_snapshot(self, *, interrupted: bool = False) -> None:
+        """Build and save a snapshot of the current logical session."""
+        context = self.tool_context
+        session_id = self.session_log.session_id
+
+        if context.task_store is None:
+            raise RuntimeError("Task storage is not configured.")
+
+        expected_task_path = (
+            Path.home()
+            / ".biopaster"
+            / "tasks"
+            / session_id
+            / "tasks.json"
+        ).resolve()
+
+        if context.task_store.path != expected_task_path:
+            raise RuntimeError(
+                "Task storage does not belong to the current session."
+            )
+
+        snapshot = SessionSnapshot(
+            session_id=session_id,
+            created_at=self.session_created_at,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            provider=self.provider_name,
+            model=self.provider.model,
+            workspace_root=context.workspace_root,
+            cwd=context.cwd,
+            notebook_path=context.notebook_path,
+            task_list_id=session_id,
+            conversation=self.conversation,
+            interrupted=interrupted,
+            title=self.session_title,
+            title_attempted=self.title_attempted,
+        )
+
+        save_session(snapshot)
+        
+        
+    def _autosave_session(self, *, interrupted: bool = False) -> None:
+        """Save without turning a persistence error into an agent failure."""
+        try:
+            self._save_session_snapshot(interrupted=interrupted)
+        except Exception as e:
+            message = (
+                f"Session autosave failed: {type(e).__name__}: {e}. "
+                "Recent conversation changes may not be recoverable."
+            )
+
+            # A logging failure must not hide the original save failure.
+            try:
+                self.session_log.record_exception(
+                    "session_autosave_failed", e
+                )
+            except Exception:
+                pass
+
+            view = self._execution_view
+            if view is not None and view.session.app.is_running:
+                with view._lock:
+                    view.notice = message
+                    view._changed()
+            else:
+                self.console.print(
+                    message,
+                    style="yellow",
+                    markup=False,
+                )
