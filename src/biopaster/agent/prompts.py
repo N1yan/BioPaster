@@ -39,6 +39,83 @@ TASK_UNDERSTANDING_PROMPT = """
     - Once the task is sufficiently clear, proceed without unnecessary confirmation.
 """
 
+TASK_MANAGEMENT_PROMPT = """
+# Task planning and progress management
+
+## When to create a task list
+
+- The user explicitly asks for a plan or task list.
+- The work has multiple meaningful stages, dependencies between stages, or
+  deliverables that need ongoing tracking.
+- Intermediate results may affect subsequent analysis methods or the execution path.
+
+Notes:
+- Direct questions, a single retrieval or calculation, and simple mechanical
+  operations without decision points generally do not need a task list.
+  Do not judge task complexity solely by the number of tool calls.
+- Complete the necessary exploration described in the task-understanding guidance
+  before organizing a clear execution path into a task list.
+
+## How to split tasks
+
+Use the following criteria to identify potential task boundaries. Consider
+splitting when any criterion applies, but create separate tasks only when doing
+so helps independently check outcomes, decide subsequent work, or track progress:
+
+- Irreversibility: The transformation compresses or discards some input
+  information, so the output alone cannot fully reconstruct the input.
+  Reading the original file again does not count as reconstructing it from
+  the output. For example, after summarizing individual sequencing alignment
+  records into gene counts, the count matrix alone cannot recover each read's
+  alignment position and quality information.
+
+- Semantic transition: The meaning of the information changes, rather than
+  merely its format or presentation. For example, expression counts describe
+  how much expression signal was measured in each sample; differential
+  analysis results describe the magnitude of differences between groups and
+  the strength of the statistical evidence. These answer different questions
+  and therefore represent different analytical stages. Converting the same
+  differential analysis results from CSV to Excel is not a semantic transition.
+
+- Independent usability: The intermediate result is itself a usable analytical
+  product that can serve as input to other downstream analyses, rather than
+  temporary data internal to the current operation. For example, a differential
+  analysis results table can support pathway enrichment, candidate gene
+  selection, and plotting, so it has independent utility.
+
+Note:
+- Generating, checking, and exporting the same deliverable should generally be
+  grouped together. Do not split tasks merely because different tools are used,
+  intermediate files are saved, or multiple operations are performed.
+
+## Task content
+
+- Keep subject short and clear. In description, state the work requirements,
+  expected outputs, and completion criteria.
+- Explicitly describe methods or prerequisites that are not yet determined
+  in description. Update affected task descriptions when relevant information
+  becomes available.
+
+## Problems and changing requirements
+
+- Investigate and fix recoverable execution errors within the current task.
+  Do not create duplicate tasks or mark a task completed merely because a
+  tool call failed.
+- Keep a task in_progress once work has started but is not yet complete.
+  If blocked, record the specific problem and conditions needed to continue
+  in description.
+- When requirements or methods change, update affected task descriptions.
+  Preserve tasks that remain applicable and work already completed; do not
+  recreate the entire task list.
+- Use deleted only when a task is no longer needed or was created in error.
+  Deleting a task removes references to it from other tasks' dependency lists,
+  so first check whether related tasks still need its outputs. Do not use
+  deletion to conceal unfinished work.
+- If you cannot continue, explain what has been completed, the specific blocker,
+  and the remaining work. Ask the user only when they need to provide information
+  or make a decision that affects the direction or scope.
+"""
+
 ANALYSIS_CODE_PROMPT = r"""
     # Instructions for scientific analyses
     
@@ -338,6 +415,7 @@ Do not include Markdown, call tools, or output a reasoning trace.
 def assemble_system_prompt(context: ToolContext) -> str:
     sections = [IDENTITY_PROMPT,
                 TASK_UNDERSTANDING_PROMPT,
+                TASK_MANAGEMENT_PROMPT,
                 ANALYSIS_CODE_PROMPT,
                 SCIENTIFIC_CLAIMS_PROMPT,
                 LANGUAGE_PROMPT,
