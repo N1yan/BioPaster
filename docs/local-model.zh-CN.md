@@ -64,7 +64,9 @@ curl http://127.0.0.1:8001/health
 
 ## 配置 BioPaster
 
-先备份 `~/.biopaster/config.json`。增加本地连接，并将全局 `default_model` 设置为该模型 ID，保留其他配置：
+首次使用时，在一个已有目录中运行 `biopaster`，生成 `~/.biopaster/config.json`。程序会显示配置提示并退出。已有配置请先备份。
+
+将初始云端连接替换为下面的本地连接，并将全局 `default_model` 设置为该模型 ID。保留自己需要的 kernel、MCP 等设置。删除不使用的空密钥连接：所有已配置的 provider 都会被校验，即使它没有被选中。
 
 ```json
 {
@@ -85,15 +87,19 @@ curl http://127.0.0.1:8001/health
 }
 ```
 
-模型名称应与服务 alias 一致，上下文预算应与单次请求可用的上下文一致；调整并行槽位后，应核对服务启动日志。使用 `/model` 选择其他已配置的模型或连接，仅影响当前会话。同一 provider 下配置多个模型的方法见[模型配置说明](model-selection.md)。
+模型名称应与服务 alias 一致，上下文预算应与单次请求可用的上下文一致；调整并行槽位后，应核对服务启动日志。使用 `/model` 选择其他已配置的模型或连接，仅影响当前会话。同一 provider 下配置多个模型的方法见[模型配置说明](model-selection.zh-CN.md)。
+
+`api_key: "local"` 是供客户端使用的非空占位值，适用于未开启鉴权的本地服务，无需购买密钥。如果服务开启了鉴权，填写实际配置的密钥。`base_url` 使用服务根地址，由客户端追加 Messages API 路径。
 
 会话标题通过同一个 provider 发起独立请求，关闭 thinking，并设置 2048 token 输出上限。服务是否支持这些选项取决于版本和模型模板。
 
-当前代码在 `src/biopaster/repl/core.py` 中初始化固定的工作区及 Notebook 路径。使用文件或代码工具前，请将其设置为自己的有效工作目录。模型配置不会自动修改这些路径。
+当前目录默认作为工作区，也可以通过 `biopaster --workspace /path/to/project` 指定其他已有目录。Notebook 默认位于工作区内的 `notebook.ipynb`，无需修改源码。`/new` 沿用这些路径，`/resume` 使用历史会话保存的路径。
 
 ## 测试命令行
 
 ```bash
+mkdir -p ~/biopaster-work
+cd ~/biopaster-work
 biopaster
 ```
 

@@ -7,10 +7,13 @@ import warnings
 from typing import Any
 from jupyter_client.kernelspec import KernelSpecManager
 
+
+class ConfigError(ValueError):
+    """An actionable configuration error, safe to display without a traceback."""
+
+
 def get_config_path() -> Path:
-    config_dir = Path.home() / ".biopaster"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / "config.json"
+    return Path.home() / ".biopaster" / "config.json"
     
 def save_config(config: dict[str, Any]) -> None:
     config_path = get_config_path()
@@ -45,23 +48,33 @@ def get_default_config() -> dict[str, Any]:
 
 
 def load_config() -> dict[str, Any]:
-    """Load configuration from file.
-
-    Returns:
-        Configuration dictionary
-    """
+    """Read configuration without replacing invalid user settings."""
     config_path = get_config_path()
-    if not config_path.exists():
-        config = get_default_config()
-        save_config(config)
-        return config
-    
     try:
-        config = json.loads(config_path.read_text())
-        return config
-    except Exception as e:
-        print(f"Error loading config: {e}")
-        return get_default_config()
+        if not config_path.exists():
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with config_path.open("x", encoding="utf-8") as file:
+                    json.dump(get_default_config(), file, indent=2, ensure_ascii=False)
+            except FileExistsError:
+                pass  # Another process created it; read that file below.
+            else:
+                raise ConfigError(
+                    "Created configuration file. Fill in providers.<name>.api_key, "
+                    "check base_url and default_model, then run biopaster again."
+                )
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ConfigError(
+            f"Invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
+    except UnicodeError as exc:
+        raise ConfigError("Configuration must be UTF-8 encoded.") from exc
+    except OSError as exc:
+        raise ConfigError(f"Cannot read or create configuration: {exc.strerror}") from exc
+    if not isinstance(config, dict):
+        raise ConfigError("Configuration must be a JSON object.")
+    return config
     
 def get_provider_config(provider: str) -> dict[str, Any]:
     """Get configuration for a specific provider.
@@ -76,7 +89,7 @@ def get_provider_config(provider: str) -> dict[str, Any]:
     providers = config.get("providers", {})
 
     if provider not in providers:
-        raise ValueError(f"Unknown provider: {provider}")
+        raise ConfigError(f"Unknown provider: {provider}")
 
     return providers[provider]
 
@@ -85,29 +98,29 @@ def get_model_options(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Read configured models in provider and model declaration order."""
     providers = config.get("providers", {})
     if not isinstance(providers, dict) or not providers:
-        raise ValueError("providers must be a non-empty object")
+        raise ConfigError("providers must be a non-empty object")
     options = []
     for name, connection in providers.items():
         if not isinstance(name, str) or not name.strip() or not isinstance(connection, dict):
-            raise ValueError("Provider names and settings are invalid")
+            raise ConfigError("Provider names and settings are invalid")
         for field in ("api_key", "base_url"):
             if not isinstance(connection.get(field), str) or not connection[field].strip():
-                raise ValueError(f"{name}.{field} must be a non-empty string")
+                raise ConfigError(f"{name}.{field} must be a non-empty string")
         models = connection.get("models")
         if not isinstance(models, list) or not models:
-            raise ValueError(f"{name}.models must be a non-empty list")
+            raise ConfigError(f"{name}.models must be a non-empty list")
         ids = set()
         for model in models:
             if not isinstance(model, dict):
-                raise ValueError(f"{name}.models entries must be objects")
+                raise ConfigError(f"{name}.models entries must be objects")
             model_id = model.get("id")
             if not isinstance(model_id, str) or not model_id.strip() or model_id in ids:
-                raise ValueError(f"Invalid or duplicate model ID in {name}")
+                raise ConfigError(f"Invalid or duplicate model ID in {name}")
             ids.add(model_id)
             window = model.get("context_window", connection.get("context_window", 128000))
             output = model.get("max_output_tokens", connection.get("max_output_tokens", 32000))
             if type(window) is not int or type(output) is not int or output < 1 or window <= output:
-                raise ValueError(f"Invalid token budgets for {name}/{model_id}")
+                raise ConfigError(f"Invalid token budgets for {name}/{model_id}")
             options.append({
                 "provider": name,
                 "api_key": connection["api_key"],
@@ -124,11 +137,11 @@ def resolve_model_config(config: dict[str, Any]) -> dict[str, Any]:
     options = get_model_options(config)
     default_model = config.get("default_model")
     if not isinstance(default_model, str) or not default_model.strip():
-        raise ValueError("default_model must be a non-empty string")
+        raise ConfigError("default_model must be a non-empty string")
     for option in options:
         if option["model"] == default_model:
             return option
-    raise ValueError(f"Default model is not configured: {default_model}")
+    raise ConfigError(f"default_model is not present in providers.*.models: {default_model}")
 
 
 def get_configured_notebook_kernels() -> dict[str, dict[str, str]]:
@@ -141,23 +154,23 @@ def get_configured_notebook_kernels() -> dict[str, dict[str, str]]:
     configured = load_config().get("notebook_kernels", default)
     if isinstance(configured, list):
         if not configured:
-            raise ValueError("notebook_kernels must not be empty")
+            raise ConfigError("notebook_kernels must not be empty")
         entries = {name: {} for name in configured}
     elif isinstance(configured, dict):
         if not configured:
-            raise ValueError("notebook_kernels must not be empty")
+            raise ConfigError("notebook_kernels must not be empty")
         entries = configured
     else:
-        raise ValueError("notebook_kernels must be an object or a list")
+        raise ConfigError("notebook_kernels must be an object or a list")
 
     if any(not isinstance(name, str) or not name.strip() for name in entries):
-        raise ValueError("notebook kernel names must be non-empty strings")
+        raise ConfigError("notebook kernel names must be non-empty strings")
     if any(not isinstance(details, dict) for details in entries.values()):
-        raise ValueError("notebook kernel settings must be objects")
+        raise ConfigError("notebook kernel settings must be objects")
 
     names = [name.strip() for name in entries]
     if len(set(names)) != len(names):
-        raise ValueError("notebook_kernels must not contain duplicates")
+        raise ConfigError("notebook_kernels must not contain duplicates")
 
     installed = KernelSpecManager().get_all_specs()
     missing = [name for name in names if name not in installed]
@@ -181,7 +194,7 @@ def get_configured_notebook_kernels() -> dict[str, dict[str, str]]:
         environment = entries[name].get("environment")
         if environment is not None:
             if not isinstance(environment, str) or not environment.strip():
-                raise ValueError(
+                raise ConfigError(
                     f"Environment for notebook kernel {name} must be a non-empty string"
                 )
             result[name]["environment"] = environment.strip()

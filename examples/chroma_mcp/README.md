@@ -31,7 +31,9 @@ examples/
 └── bm25/bm25_index.pkl
 ```
 
-Use `examples/chroma_mcp` as the notebook working directory. The configuration cells in `02` and `05` contain local execution paths; replace them with your own paths. The database, Markdown corpus and BM25 index are generated locally and are not included in the repository.
+Use `examples/chroma_mcp` as the working directory for all five notebooks. Their default relative paths follow the layout above. The database, Markdown corpus and BM25 index are generated locally and are not included in the repository. If you change their locations, update both the producing and consuming notebooks, plus the MCP profile paths.
+
+Saved notebook outputs are from earlier runs; machine-specific paths have been replaced with portable paths or `<python-environment>`. They are not results from rerunning the notebooks after this cleanup. Published evaluation tables and charts are unchanged.
 
 ## 1. Install dependencies
 
@@ -46,21 +48,13 @@ The second command downloads the embedding model into the local cache. The noteb
 
 ## 2. Prepare source documents
 
-From a terminal in `examples/chroma_mcp`:
-
-```bash
-mkdir -p data/trec_pm2019 ../bm25
-wget -c -P data/trec_pm2019 https://trec.nist.gov/data/precmed/topics2019.xml
-wget -c -P data/trec_pm2019 https://trec.nist.gov/data/precmed/qrels-treceval-trials.38.txt
-```
-
-Open `01_prepare_trec.ipynb`, run the imports, skip **Download benchmark files**, and continue from **Download trial corpus**. The skipped cell uses `ddata/trec_pm2019`; the commands above put the judgment files in the `data/trec_pm2019` directory expected by subsequent cells.
+With `examples/chroma_mcp` as the working directory, run `01_prepare_trec.ipynb` in order, including **Download benchmark files** and **Download trial corpus**. Both download steps use `data/trec_pm2019`, the directory read by the extraction and conversion cells. The shell cells require Bash and `wget`.
 
 The four trial archives total approximately 1 GB. The notebook selects 8,567 trials referenced by qrels and creates `trial_markdown/NCTxxxxxxxx.md`. These Markdown files remain the full-text source.
 
 ## 3. Build the Chroma collection
 
-Set the paths in `02_build_context_db.ipynb`:
+`02_build_context_db.ipynb` uses these default paths:
 
 ```python
 md_dir = Path("data/trec_pm2019/trial_markdown")
@@ -76,7 +70,7 @@ The model is `BAAI/bge-small-en-v1.5`, with normalized embeddings and cosine dis
 
 Run `03_build_bm25.ipynb` in order. Each Markdown file is one document indexed by `BM25Retriever`. Both documents and queries are lowercased and tokenized with `[a-z0-9]+`.
 
-The index is saved to `../bm25/bm25_index.pkl`, including term statistics, ordered metadata and tokenization settings. Source text is read from Markdown, so keep the files consistent with the saved index; rebuild the relevant indexes when updating the corpus. The final cells reload the index and run a query.
+The index is saved to `../bm25/bm25_index.pkl`; the save cell creates its parent directory if needed. It includes term statistics, ordered metadata and tokenization settings. Source text is read from Markdown, so keep the files consistent with the saved index; rebuild the relevant indexes when updating the corpus. The final cells reload the index and run a query. The stored source paths are relative to `examples/chroma_mcp`, which must also be the working directory when reloading in `03` and `04`.
 
 ## 5. Run hybrid retrieval
 
@@ -144,13 +138,15 @@ Search returns `retrieval_method: hybrid_rrf` and `rank`, not cosine distances a
 
 ## 7. Evaluate retrieval
 
-Before running `05_evaluate_retrieval.ipynb`, set the data, BM25, Chroma and output paths in its configuration cell. For repository-local result files:
+`05_evaluate_retrieval.ipynb` defaults to the data and indexes created above. Its configuration includes:
 
 ```python
 output_dir = Path("../../docs/assets/trec2019/hybrid")
 sample_size = 10
 sample_seed = 42
 ```
+
+Running the export cells writes into the published results directory above. Use a separate `output_dir` when experimenting to preserve the reference results.
 
 The notebook measures P@10, nDCG@10 and Recall@100. To compare Recall@100, it retrieves 100 distinct trials per branch. The service and `04` still use a 100-chunk vector budget, so their candidate depths differ.
 

@@ -64,7 +64,9 @@ A ready server returns `{"status":"ok"}`. HTTP 503 during loading is expected. S
 
 ## Configure BioPaster
 
-Back up `~/.biopaster/config.json`. Add a local connection and set the global `default_model` to its model ID, preserving the rest of your configuration:
+On first launch, run `biopaster` from an existing directory to create `~/.biopaster/config.json`. It will display configuration instructions and exit. Back up an existing file before editing it.
+
+Replace the initial cloud connection with the local connection below and set the global `default_model` to its model ID. Preserve any kernel, MCP, and other settings you need. Remove unused connections with empty keys: every configured provider is validated, even if it is not selected.
 
 ```json
 {
@@ -87,13 +89,17 @@ Back up `~/.biopaster/config.json`. Add a local connection and set the global `d
 
 Match the model name to the server alias and its context budget to the available context for a single request. Verify the startup log if changing parallel-slot settings. Use `/model` to select another configured model or connection; the selection applies to the current session. See [model configuration](model-selection.md) for multiple models under one provider.
 
+`api_key: "local"` is a nonempty client placeholder for a local server without authentication. It does not require a paid key. If server authentication is enabled, use its configured key. Keep `base_url` at the server root; the client appends the Messages API path.
+
 Title generation uses the same provider through a separate request, with thinking disabled and a 2048-token output limit. Server support for these options depends on its version and model template.
 
-The current checkout initializes a fixed workspace and notebook path in `src/biopaster/repl/core.py`. Set them to your own existing workspace before using file or code tools. Configuring the model does not change these paths.
+The current directory is the default workspace. To use another existing directory, run `biopaster --workspace /path/to/project`. The default notebook path is `notebook.ipynb` inside that workspace; no source edits are needed. `/new` keeps these paths, while `/resume` uses the saved session's paths.
 
 ## Test the CLI
 
 ```bash
+mkdir -p ~/biopaster-work
+cd ~/biopaster-work
 biopaster
 ```
 

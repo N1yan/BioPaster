@@ -212,7 +212,7 @@ class StreamingMarkdownRenderer:
 
 
 class BioPasterStreamingREPL:
-    def __init__(self) -> None:
+    def __init__(self, *, workspace_root: Path) -> None:
         self.console = Console()
         model_config = resolve_model_config(load_config())
         self.provider_name = model_config["provider"]
@@ -245,11 +245,9 @@ class BioPasterStreamingREPL:
         self.notebook_kernels = get_configured_notebook_kernels()
         self.tool_registry = ToolRegistry()
         self.tool_context = ToolContext(
-            workspace_root=Path("/home/yan/test/BioPaster"),
+            workspace_root=workspace_root,
             tools=self.tool_registry.list_tools(),
-            notebook_path=Path(
-                "/home/yan/test/BioPaster/notebook.ipynb"
-            ),
+            notebook_path=workspace_root / "notebook.ipynb",
         )
         self.tool_context.permission_context.permission_handler = (
             self._ask_permission

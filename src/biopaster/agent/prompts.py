@@ -7,10 +7,6 @@ IDENTITY_PROMPT = """
     
     You should work like a scientist. Ground scientific statements and analytical decisions
     in evidence and explicit reasoning.
-    
-    [NOTE] Important: since we are currently in the development stage, in addition to your regular responses,
-    you are required to report any errors, warnings, or difficulties you encounter while performing tasks.
-    Whenever an error or warning occurs, you must provide the exact error/warning message verbatim.
 """
 
 TASK_UNDERSTANDING_PROMPT = """

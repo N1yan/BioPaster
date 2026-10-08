@@ -2,3 +2,15 @@ approach_plan/
 __pycache__/
 *.pyc
 .pytest_cache
+
+# Local credentials (keep distributable templates)
+.env
+.env.*
+!.env.example
+
+# Virtual environments and Python build artifacts
+.venv/
+venv/
+*.egg-info/
+build/
+dist/

@@ -1,0 +1,23 @@
+{
+  "default_model": "nvidia/nemotron-3-nano-30b-a3b:free",
+  "providers": {
+    "openrouter": {
+      "api_key": "",
+      "base_url": "https://openrouter.ai/api",
+      "models": [
+        {
+          "id": "nvidia/nemotron-3-nano-30b-a3b:free",
+          "context_window": 128000,
+          "max_output_tokens": 32000
+        }
+      ]
+    }
+  },
+  "session": {
+    "auto_save": true
+  },
+  "notebook_kernels": {
+    "python3": {}
+  },
+  "NOTEBOOK_ENV": ""
+}

@@ -31,7 +31,9 @@ examples/
 └── bm25/bm25_index.pkl
 ```
 
-Notebook 的工作目录设为 `examples/chroma_mcp`。`02` 和 `05` 的配置单元包含本机运行路径，运行前需要改为自己的路径。数据库、Markdown 和 BM25 索引由运行生成，不包含在仓库里。
+五个 Notebook 的工作目录均设为 `examples/chroma_mcp`，默认相对路径对应上面的目录结构。数据库、Markdown 和 BM25 索引由运行生成，不包含在仓库里。如果更改位置，需要同步调整生产和消费这些文件的 Notebook，以及 MCP 配置中的路径。
+
+Notebook 保留的输出来自历史运行，其中机器相关路径已替换为相对路径或 `<python-environment>`；这些输出不代表本次清理后重新执行的结果。正式评估表格与图表未改动。
 
 ## 1. 安装环境
 
@@ -46,21 +48,13 @@ python -c "from sentence_transformers import SentenceTransformer; SentenceTransf
 
 ## 2. 准备原文
 
-在 `examples/chroma_mcp` 的终端运行：
-
-```bash
-mkdir -p data/trec_pm2019 ../bm25
-wget -c -P data/trec_pm2019 https://trec.nist.gov/data/precmed/topics2019.xml
-wget -c -P data/trec_pm2019 https://trec.nist.gov/data/precmed/qrels-treceval-trials.38.txt
-```
-
-打开 `01_prepare_trec.ipynb`，运行导入单元，跳过 **Download benchmark files**，再从 **Download trial corpus** 继续。跳过的单元中目录写为 `ddata/trec_pm2019`，上面的命令已把标注文件放在后续代码使用的 `data/trec_pm2019`。
+以 `examples/chroma_mcp` 为工作目录，依次运行 `01_prepare_trec.ipynb`，包括 **Download benchmark files** 和 **Download trial corpus**。两个下载步骤均使用 `data/trec_pm2019`，与后续提取、转换单元读取的目录一致。Shell 单元需要 Bash 和 `wget`。
 
 四个试验压缩包合计约 1 GB。Notebook 按 qrels 中的 NCT ID 提取 8,567 篇试验，生成 `trial_markdown/NCTxxxxxxxx.md`。Markdown 是后续读取完整原文的来源。
 
 ## 3. 建立 Chroma 集合
 
-在 `02_build_context_db.ipynb` 中设置：
+`02_build_context_db.ipynb` 默认使用以下路径：
 
 ```python
 md_dir = Path("data/trec_pm2019/trial_markdown")
@@ -76,7 +70,7 @@ collection_name = "trec_2019_trials_context"
 
 依次运行 `03_build_bm25.ipynb`。每篇 Markdown 作为一条文档，用 `BM25Retriever` 建索引。文档和查询统一转小写，并按 `[a-z0-9]+` 分词。
 
-索引保存到 `../bm25/bm25_index.pkl`，包括词频统计、按原顺序保存的 metadata 和分词设置。原文仍从 Markdown 读取，因此保存后不要改动文档内容；更新语料时重新构建对应索引。Notebook 最后加载索引并执行一次查询。
+索引保存到 `../bm25/bm25_index.pkl`，保存单元会自动创建缺失的父目录。索引包括词频统计、按原顺序保存的 metadata 和分词设置。原文仍从 Markdown 读取，因此保存后不要改动文档内容；更新语料时重新构建对应索引。Notebook 最后加载索引并执行一次查询。保存的原文路径相对于 `examples/chroma_mcp`，因此在 `03`、`04` 中重新加载时也应使用这个工作目录。
 
 ## 5. 混合检索
 
@@ -144,13 +138,15 @@ python -c "import sys; print(sys.executable)"
 
 ## 7. 评估
 
-运行 `05_evaluate_retrieval.ipynb` 前，在配置单元设置数据、BM25、Chroma 和输出路径。仓库内结果输出目录可设为：
+`05_evaluate_retrieval.ipynb` 默认读取前面生成的数据与索引，配置包括：
 
 ```python
 output_dir = Path("../../docs/assets/trec2019/hybrid")
 sample_size = 10
 sample_seed = 42
 ```
+
+运行导出单元会写入上述正式结果目录。自行实验时，请将 `output_dir` 改为其他目录，以保留参考结果。
 
 评估分别计算 P@10、nDCG@10 和 Recall@100。为了比较 Recall@100，评估会补足每路 100 篇不同试验；服务和 `04` 仍使用向量侧 100 个片段的设置，两者候选预算不同。
 

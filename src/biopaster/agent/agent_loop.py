@@ -50,7 +50,6 @@ def _safe_call_handler(handler: Callable | None, event: ToolEvent | ResultEvent)
 
 # ── Tool Result Persist ──
 TOOL_RESULT_DIR = Path.home() / ".biopaster/.tool_results"
-TOOL_RESULT_DIR.mkdir(exist_ok=True)
 persist = Persist(TOOL_RESULT_DIR, max_content_length=20000)
 
 def _process_tool_result(tool_result: ToolResult, tool_use_id):
