@@ -66,6 +66,32 @@ Enter `/model`, use ↑/↓ to select a connection and model, press Enter to con
 
 A successful selection means local configuration and client initialization succeeded. It does not verify server credentials, model availability, or tool use. Test the server response with an actual task.
 
+## Thinking switch and reasoning effort
+
+For an Anthropic-compatible endpoint supporting `output_config.effort`, add an optional model-level setting:
+
+```json
+{
+  "id": "qwen3.8-27b",
+  "context_window": 128000,
+  "max_output_tokens": 32000,
+  "enable_thinking": true,
+  "reasoning_effort": "xhigh"
+}
+```
+
+`enable_thinking` accepts `true` (enabled), `false` (disabled), or `null`/omission (server default). Disabled requests omit effort. Explicit per-call thinking controls, including auxiliary calls, override model defaults.
+
+Accepted `reasoning_effort` values are `low`, `medium`, `high`, `xhigh`, and `max`; actual support and aliases depend on the endpoint. The current Alibaba Cloud Qwen3.8-27B endpoint was verified to accept `low`, `medium`, and `xhigh`. Omit the field or use `null` to keep server defaults. Do not configure it for endpoints that do not support this parameter.
+
+The provider named `local` uses the llama.cpp Messages adapter. Model-level `reasoning_effort` is sent as `chat_template_kwargs.reasoning_effort`: use `medium` or `xhigh` for Bonsai 2 27B. The older Qwopus 9B template does not read this setting, so omit it for that model. The switch uses `chat_template_kwargs.enable_thinking` alongside the existing -1/0 budget compatibility mapping. Enabled thinking has no separate budget cap but remains subject to total output and context limits. Other providers use `output_config.effort`. Disabled thinking omits effort. Keep the server default `--reasoning-budget -1`.
+
+Local requests also send `chat_template_kwargs.enable_thinking`. Bonsai 2 testing showed that budget 0 alone did not disable reasoning, while the native template flag did. Effective switching requires template support: the existing Qwopus 9B template ignores this flag, so disabling it is not guaranteed. Budget mapping is retained only for compatibility. The example includes both local and Qwen API connections; remove unused providers and fill in credentials and endpoint addresses for retained connections.
+
+BioPaster sends the value as `output_config.effort` through `extra_body` and logs the request. Explicit per-call effort takes precedence. Auxiliary calls that disable thinking or specify a thinking budget do not inherit this default. Effort does not change the output limit or guarantee a particular reasoning length.
+
+Restart or reselect the model with `/model` after editing. `/new` and `/resume` keep the currently loaded provider settings rather than restoring effort from a historical session.
+
 ## Common configuration errors
 
 | Message or symptom | What to do |

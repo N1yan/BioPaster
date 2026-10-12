@@ -66,6 +66,32 @@ BioPaster 从 `~/.biopaster/config.json` 读取模型连接，通过全局 `defa
 
 选择成功表示本地配置和客户端初始化成功，不代表远端密钥、模型或工具调用已经验证。请通过实际任务检查服务响应。
 
+## 思考开关与强度
+
+支持 `output_config.effort` 的 Anthropic 兼容接口，可在对应模型条目中设置：
+
+```json
+{
+  "id": "qwen3.8-27b",
+  "context_window": 128000,
+  "max_output_tokens": 32000,
+  "enable_thinking": true,
+  "reasoning_effort": "xhigh"
+}
+```
+
+`enable_thinking` 是模型级开关：`true` 开启，`false` 关闭，不填写或设为 `null` 时沿用服务端默认行为。关闭思考时不发送 effort；明确的单次请求开关（包括辅助请求）优先于模型默认值。
+
+`reasoning_effort` 可填写 `low`、`medium`、`high`、`xhigh` 或 `max`；具体档位的支持和映射以服务端为准。Qwen3.8-27B 的当前阿里云接口已验证接受 `low`、`medium`、`xhigh`。不填写或设为 `null` 时不发送强度参数，沿用服务端默认值。不要给不支持该参数的接口添加此配置。
+
+当前名为 `local` 的 provider 按 llama.cpp Messages 接口适配。`reasoning_effort` 通过 `chat_template_kwargs.reasoning_effort` 传入模型模板；Bonsai 2 27B 使用 `medium` 或 `xhigh`，旧 Qwopus 9B 模板不读取该字段，不应为它配置等级。开关通过 `chat_template_kwargs.enable_thinking` 传递，同时保留思考预算的 -1/0 兼容转换。开启时不额外限制思考，仍受总输出和上下文限制。其他 provider 使用 `output_config.effort`；关闭思考时不发送等级。服务端应保留默认 `--reasoning-budget -1`。
+
+本地请求还会同步传入 `chat_template_kwargs.enable_thinking`。Bonsai 2 的实测显示预算 0 本身未关闭思考，而模板开关 false 能关闭，因此实际开关以模板支持为前提。旧 Qwopus 9B 的内置模板不读取该开关，不能保证关闭。预算参数仅保留为兼容处理。示例配置同时展示 local 与 Qwen API；复制时删除不用的 provider，并填写保留连接的密钥和真实地址。
+
+BioPaster 将其通过 `extra_body` 传为 `output_config.effort`，实际请求参数会记录在原生会话日志中。辅助请求明确关闭思考或指定思考预算时，不叠加强度默认值；调用方显式指定的 effort 优先。它不改变 `max_output_tokens`，也不保证实际思考长度。
+
+保存后重新启动，或通过 `/model` 重新选择该模型以加载新配置。`/new`、`/resume` 沿用当前已加载的模型设置，不从历史会话恢复强度。
+
 ## 常见配置错误
 
 | 提示或现象 | 处理方式 |

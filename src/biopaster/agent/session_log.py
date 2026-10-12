@@ -30,7 +30,11 @@ class SessionLog:
         root: Path,
         *,
         session_id: str | None = None,
+        enabled: bool = False,
     ):
+        if not isinstance(enabled, bool):
+            raise ValueError("Session log enabled must be a boolean.")
+        self.enabled = enabled
         resuming = session_id is not None
 
         if resuming:
@@ -44,21 +48,23 @@ class SessionLog:
         self.run_id: str | None = None
 
         self.directory = Path(root) / self.session_id
+        self.path = self.directory / "events.jsonl"
+        self._lock = Lock()
 
         if resuming:
             if not self.directory.is_dir():
                 raise FileNotFoundError(
                     f"Session directory does not exist: {self.directory}"
                 )
-        else:
+        elif self.enabled:
             self.directory.mkdir(
                 mode=0o700,
                 parents=True,
                 exist_ok=False,
             )
 
-        self.path = self.directory / "events.jsonl"
-        self._lock = Lock()
+        if not self.enabled:
+            return
 
         if resuming:
             log_missing = not self.path.exists()
@@ -74,6 +80,8 @@ class SessionLog:
             self.record("session_start", {})
 
     def record(self, event_type: str, data):
+        if not self.enabled:
+            return
         event = {
             "time": datetime.now(timezone.utc).isoformat(),
             "session_id": self.session_id,
@@ -93,6 +101,8 @@ class SessionLog:
                 file.write(line + "\n")
 
     def record_exception(self, event_type: str, exc: BaseException):
+        if not self.enabled:
+            return
         self.record(
             event_type,
             {
@@ -107,9 +117,11 @@ class SessionLog:
         )
     
     @classmethod
-    def open_existing(cls, root: Path, session_id: str) -> "SessionLog":
+    def open_existing(
+        cls, root: Path, session_id: str, *, enabled: bool = False,
+    ) -> "SessionLog":
         """Open a saved session's log for subsequent appends."""
-        return cls(root, session_id=session_id)
+        return cls(root, session_id=session_id, enabled=enabled)
 
     def start_run(self, user_input: str):
         self.run_id = uuid4().hex

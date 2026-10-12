@@ -36,7 +36,7 @@ def get_default_config() -> dict[str, Any]:
             }
         },
         "session": {
-            "auto_save": True,
+            "log_enabled": False,
         },
         "notebook_kernels": {
             "python3": {
@@ -121,6 +121,12 @@ def get_model_options(config: dict[str, Any]) -> list[dict[str, Any]]:
             output = model.get("max_output_tokens", connection.get("max_output_tokens", 32000))
             if type(window) is not int or type(output) is not int or output < 1 or window <= output:
                 raise ConfigError(f"Invalid token budgets for {name}/{model_id}")
+            effort = model.get("reasoning_effort")
+            if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
+                raise ConfigError(f"Invalid reasoning_effort for {name}/{model_id}")
+            thinking = model.get("enable_thinking")
+            if thinking is not None and type(thinking) is not bool:
+                raise ConfigError(f"enable_thinking must be a boolean or null for {name}/{model_id}")
             options.append({
                 "provider": name,
                 "api_key": connection["api_key"],
@@ -128,6 +134,8 @@ def get_model_options(config: dict[str, Any]) -> list[dict[str, Any]]:
                 "model": model_id,
                 "context_window": window,
                 "max_output_tokens": output,
+                "reasoning_effort": effort,
+                "enable_thinking": thinking,
             })
     return options
 

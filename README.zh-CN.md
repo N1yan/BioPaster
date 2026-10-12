@@ -18,7 +18,7 @@ BioPaster 是面向本地小参数模型的生物医学 AI Agent。将可免费�
 
 ### 让小参数模型调用科研工具
 
-BioPaster 将文献、文件和代码工具接入本地模型。模型可以通过检索补充信息、通过原文查证来源、通过执行代码处理数据，让回答建立在实际获取的资料和计算结果上。
+BioPaster 将生物医学知识源、文件和代码工具接入本地模型。检索增强生成（RAG）流程可利用论文、知识图谱及其他生物医学资料：检索相关信息，并将其作为回答问题的上下文。模型也可以检查工作区数据并执行代码，让分析建立在实际获取的资料和计算结果上。
 
 | 研究环节 | BioPaster 提供的工具能力 |
 | --- | --- |
@@ -46,7 +46,13 @@ BioPaster 将文献、文件和代码工具接入本地模型。模型可以通�
 
 确认方案后，可以继续要求编写并执行代码、检查输出和调整分析。代码与结果保留在 Notebook 中，便于人工核查和后续复用。
 
-项目正在进行小参数本地模型的任务测试。具体模型、硬件配置和任务表现将在测试完成后补充；当前不承诺所有小参数模型都能可靠完成上述任务。
+## ScholarQABench 生物医学子集
+
+BioPaster 使用 [Bonsai 2 27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf) 完成了 [ScholarQABench](https://github.com/AkariAsai/ScholarQABench) 生物医学子集中的 20 道题，并以 Claude Code 作为 harness 对照；两者使用相同模型。
+
+![ScholarQABench 生物医学 20 题的引用召回率与引用精确率](docs/assets/benchmark/scholarqa-bio-citation-scores.png)
+
+分数为逐题宏平均。**引用召回率**按每道题计算：至少获得一篇所引学术论文支持的实质性主张数 ÷ 答案中的实质性主张总数。**引用精确率**按每道题计算：确实支持对应主张的“主张—引用”关系数 ÷ 答案中全部“主张—引用”关系数。同一主张引用 3 篇论文，在召回率中计 1 个主张，在精确率中计 3 条关系；不支持主张的引用关系计入精确率分母、不计入分子。
 
 ## 本地运行
 
@@ -138,7 +144,7 @@ biopaster
       ]
     }
   },
-  "session": {"auto_save": true},
+  "session": {"log_enabled": false},
   "notebook_kernels": {"python3": {}},
   "NOTEBOOK_ENV": ""
 }
@@ -209,14 +215,16 @@ biopaster --workspace /path/to/project
 | 位置 | 内容 |
 | --- | --- |
 | `~/.biopaster/config.json` | 模型连接、API key、kernel 和 MCP 配置 |
-| `~/.biopaster/sessions/` | 会话快照与事件日志 |
+| `~/.biopaster/sessions/` | 会话快照与可选的事件日志 |
 | `~/.biopaster/tasks/` | 会话任务列表 |
 | `~/.biopaster/.tool_results/` | 持久化的工具结果 |
 | 工作区 | 下载文件、分析产物和 Notebook |
 
+详细事件日志（`events.jsonl`）默认关闭。需要排查问题时，在配置中设置 `session.log_enabled` 为 `true` 并重启。关闭日志不影响会话快照和任务恢复；已有事件日志保留，但关闭期间不会继续追加。
+
 会话日志和工具结果可能包含输入资料、请求内容与输出，分享前请检查其中的信息。
 
-## 示例
+## RAG 应用示例
 
 [Chroma MCP 示例](examples/chroma_mcp/README.zh-CN.md)：使用 Notebook 准备文档、建立向量库、接入 BioPaster 并评估检索效果。
 

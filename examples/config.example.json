@@ -1,6 +1,38 @@
 {
   "default_model": "nvidia/nemotron-3-nano-30b-a3b:free",
   "providers": {
+    "local": {
+      "api_key": "local",
+      "base_url": "http://127.0.0.1:8001",
+      "models": [
+        {
+          "id": "biopaster-local",
+          "context_window": 262144,
+          "max_output_tokens": 65536,
+          "enable_thinking": true
+        },
+        {
+          "id": "bonsai-2-27b",
+          "context_window": 65536,
+          "max_output_tokens": 32000,
+          "enable_thinking": true,
+          "reasoning_effort": "xhigh"
+        }
+      ]
+    },
+    "qwen": {
+      "api_key": "",
+      "base_url": "https://YOUR_WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      "models": [
+        {
+          "id": "qwen3.8-27b",
+          "context_window": 128000,
+          "max_output_tokens": 32000,
+          "enable_thinking": true,
+          "reasoning_effort": "high"
+        }
+      ]
+    },
     "openrouter": {
       "api_key": "",
       "base_url": "https://openrouter.ai/api",
@@ -14,7 +46,7 @@
     }
   },
   "session": {
-    "auto_save": true
+    "log_enabled": false
   },
   "notebook_kernels": {
     "python3": {}

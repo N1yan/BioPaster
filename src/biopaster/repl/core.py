@@ -214,7 +214,11 @@ class StreamingMarkdownRenderer:
 class BioPasterStreamingREPL:
     def __init__(self, *, workspace_root: Path) -> None:
         self.console = Console()
-        model_config = resolve_model_config(load_config())
+        app_config = load_config()
+        model_config = resolve_model_config(app_config)
+        session_config = app_config.get("session", {})
+        if not isinstance(session_config, dict):
+            raise ValueError("session must be an object")
         self.provider_name = model_config["provider"]
         self.stream = True
         self.multiline_mode = False
@@ -232,7 +236,10 @@ class BioPasterStreamingREPL:
             "/quit",
         ]
         self.prompt_session = build_prompt_session(self.commands)
-        self.session_log = SessionLog(Path.home() / ".biopaster" / "sessions")
+        self.session_log = SessionLog(
+            Path.home() / ".biopaster" / "sessions",
+            enabled=session_config.get("log_enabled", False),
+        )
         self.session_created_at = datetime.now(timezone.utc).isoformat()
         self.session_title = None
         self.title_attempted = False
@@ -341,6 +348,9 @@ class BioPasterStreamingREPL:
             api_key=option["api_key"], base_url=option["base_url"],
             model=option["model"], context_window=option["context_window"],
             max_output_tokens=option["max_output_tokens"],
+            reasoning_effort=option.get("reasoning_effort"),
+            enable_thinking=option.get("enable_thinking"),
+            llama_cpp=option["provider"] == "local",
         )
 
     def _select_model(self) -> None:
@@ -383,6 +393,8 @@ class BioPasterStreamingREPL:
                 "provider": self.provider_name, "model": self.provider.model,
                 "context_window": self.provider.context_window,
                 "max_output_tokens": self.provider.max_output_tokens,
+                "reasoning_effort": self.provider.reasoning_effort,
+                "enable_thinking": self.provider.enable_thinking,
             })
         except Exception:
             pass
@@ -415,7 +427,10 @@ class BioPasterStreamingREPL:
             permissions.permission_handler = self._ask_permission
             permissions.review_handler = self._review_permission
 
-            new_log = SessionLog(Path.home() / ".biopaster" / "sessions")
+            new_log = SessionLog(
+                Path.home() / ".biopaster" / "sessions",
+                enabled=self.session_log.enabled,
+            )
             new_store = TaskStore(
                 Path.home() / ".biopaster" / "tasks" / new_log.session_id / "tasks.json"
             )
@@ -528,6 +543,7 @@ class BioPasterStreamingREPL:
             new_log = SessionLog.open_existing(
                 Path.home() / ".biopaster" / "sessions",
                 snapshot.session_id,
+                enabled=self.session_log.enabled,
             )
             new_context.session_log = new_log
             permissions.session_log = new_log

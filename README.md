@@ -18,7 +18,7 @@ Run small models whose licenses permit free use on your own machine. Conversatio
 
 ### Research tools for small models
 
-BioPaster connects local models to literature, file, and code tools. Models can retrieve additional information, consult original sources, and execute code to work with data, grounding responses in retrieved materials and computed results.
+BioPaster connects local models to biomedical knowledge sources, files, and code tools. Its retrieval-augmented generation (RAG) workflow can draw on literature, knowledge graphs, and other biomedical resources: retrieve relevant information and use it as context when answering questions. Models can also inspect workspace data and execute code, grounding analysis in retrieved materials and computed results.
 
 | Research stage | Available tools |
 | --- | --- |
@@ -48,7 +48,13 @@ Propose a plan first; do not run the analysis yet.
 
 After reviewing the plan, you can ask the agent to write and execute code, inspect outputs, and refine the analysis. Code and results are retained in a notebook for manual review and reuse.
 
-Task testing with local small models is ongoing. Model details, hardware configurations, and task results will be added after testing. Reliable completion of these tasks is not guaranteed for every small model.
+## ScholarQABench biomedical subset
+
+BioPaster was evaluated on 20 biomedical questions from [ScholarQABench](https://github.com/AkariAsai/ScholarQABench) with [Bonsai 2 27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf). The same model was used with Claude Code as a harness comparison.
+
+![Citation recall and precision on 20 biomedical ScholarQABench questions](docs/assets/benchmark/scholarqa-bio-citation-scores.png)
+
+Scores are per-question macro averages. **Citation recall** is calculated for each answer as the number of substantive claims supported by at least one cited academic paper divided by the total number of substantive claims. **Citation precision** is the number of answer–citation pairs where the cited paper supports that answer claim, divided by all answer–citation pairs. A claim citing three papers contributes one claim to recall and three pairs to precision; unsupported pairs count in the precision denominator but not its numerator.
 
 ## Run locally
 
@@ -140,7 +146,7 @@ For a first-time setup, use this complete configuration. If you already have a c
       ]
     }
   },
-  "session": {"auto_save": true},
+  "session": {"log_enabled": false},
   "notebook_kernels": {"python3": {}},
   "NOTEBOOK_ENV": ""
 }
@@ -211,14 +217,16 @@ Local data is primarily stored in these locations:
 | Location | Contents |
 | --- | --- |
 | `~/.biopaster/config.json` | Model connections, API keys, kernel settings, and MCP configuration |
-| `~/.biopaster/sessions/` | Session snapshots and event logs |
+| `~/.biopaster/sessions/` | Session snapshots and optional event logs |
 | `~/.biopaster/tasks/` | Session task lists |
 | `~/.biopaster/.tool_results/` | Persisted tool results |
 | Workspace | Downloaded files, analysis outputs, and notebooks |
 
+Detailed event logs (`events.jsonl`) are disabled by default. Set `session.log_enabled` to `true` in the configuration and restart to enable them for debugging. Session snapshots and task recovery still work with logging disabled. Existing event logs are kept, but are not appended to while logging is disabled.
+
 Session logs and tool results may contain input materials, request contents, and outputs. Review them before sharing.
 
-## Examples
+## RAG application example
 
 [Chroma MCP example](examples/chroma_mcp/README.md): use notebooks to prepare documents, build a vector database, connect it to BioPaster, and evaluate retrieval.
 
