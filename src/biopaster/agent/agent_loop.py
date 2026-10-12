@@ -2,7 +2,7 @@
 import json
 from typing import Any, Callable
 from ..providers.base import ChatResponse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from ..tool_system.registry import ToolRegistry
 from .conversation import Conversation, TextContentBlock, ToolUseContentBlock
 from ..tool_system.context import ToolContext
@@ -32,6 +32,8 @@ class AgentLoopResult:
     response_text: str
     usage: dict[str, Any] | None = None  # {"input_tokens": int, "output_tokens": int}
     num_turns: int = 0
+    subtype: str = "success"
+    errors: list[str] = field(default_factory=list)
 
 @dataclass(frozen=True)
 class ResultEvent:
@@ -117,8 +119,10 @@ def finish(
 
     return AgentLoopResult(
         response_text=text,
-        usage=total_usage if any(total_usage.values()) else None,
+        usage=total_usage if total_usage and any(total_usage.values()) else None,
         num_turns=turn_count,
+        subtype=subtype,
+        errors=errors or [],
     )
 
 # ── Agent Loop ──
@@ -138,6 +142,17 @@ def agent_loop(
         AgentLoopResult with final text response, usage info, and turn count
     """
     
+    detector = conversation.loop_detector
+    detector.begin_task()
+
+    def finish_run(**kwargs):
+        detector.status = kwargs.get("subtype", "success")
+        if kwargs.get("errors"):
+            detector.diagnostic = "\n".join(kwargs["errors"])
+        if on_checkpoint is not None:
+            on_checkpoint()
+        return finish(**kwargs)
+
     # system prompt
     system_prompt = assemble_system_prompt(tool_context)
 
@@ -208,6 +223,7 @@ def agent_loop(
             on_text_chunk=on_text_chunk,
         )
         turn_count += 1
+        detector.begin_turn(response.content or "")
         # Collect usage info
         if response.usage:
             total_usage["input_tokens"] += response.usage.get("input_tokens", 0)
@@ -223,7 +239,7 @@ def agent_loop(
                     final_assistant_content
                 )
 
-            return finish(
+            return finish_run(
                 text=final_assistant_content,
                 subtype="error_max_tokens",
                 errors=[
@@ -262,14 +278,14 @@ def agent_loop(
                 _emit_text_chunks(on_text_chunk, final_assistant_content)
 
             if final_assistant_content.strip():
-                return finish(text=final_assistant_content, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
+                return finish_run(text=final_assistant_content, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
 
             if last_user_visible_message is not None:
                 if stream:
                     _emit_text_chunks(on_text_chunk, last_user_visible_message)
-                return finish(text=last_user_visible_message, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
+                return finish_run(text=last_user_visible_message, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
 
-            return finish(
+            return finish_run(
                 text="",
                 subtype="error_during_execution",
                 errors=[
@@ -324,6 +340,7 @@ def agent_loop(
                     content=processed_result.output,
                     is_error=processed_result.is_error,
                 )
+                detector.record_result(tool_name, tool_input, result_output, result.is_error)
                 if on_checkpoint is not None:
                     on_checkpoint()
                             
@@ -351,11 +368,29 @@ def agent_loop(
                     error_str,
                     is_error=True,
                 )
+                detector.record_result(tool_name, tool_input, error_str, True)
                 if on_checkpoint is not None:
                     on_checkpoint()
-    
+
+        reason, check_usage = detector.check(provider, tool_context.session_log)
+        for key in total_usage:
+            total_usage[key] += check_usage.get(key, 0)
+        if reason:
+            reminder = detector.confirm(reason)
+            if reminder is None:
+                return finish_run(
+                    text="", subtype="stuck",
+                    errors=["Stopped after repeated unproductive actions despite runtime feedback. " + reason],
+                    on_event=on_event, turn_count=turn_count, total_usage=total_usage,
+                )
+            conversation.add_user_message(reminder)
+            if tool_context.session_log is not None:
+                tool_context.session_log.record("loop_feedback", {"turn": detector.turn_count, "reason": reason})
+        if on_checkpoint is not None:
+            on_checkpoint()
+
     # Reached max turns
-    return finish(
+    return finish_run(
         text="",
         subtype="error_max_turns",
         errors=[

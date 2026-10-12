@@ -14,7 +14,12 @@ class WriteTool:
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="Write",
-            description="Write a file to the local filesystem.",
+            description=(
+                "Create a text file or replace its entire contents. "
+                "Read an existing file before overwriting it; it must remain unchanged "
+                "since it was last read or written in this session. "
+                "Use Edit for targeted replacements."
+            ),
             input_schema={
                 "type": "object",
                 "additionalProperties": False,
@@ -52,9 +57,9 @@ class WriteTool:
         paths = context.resolve_permission_paths(file_path)
         path = paths[-1]
 
-        if path.exists():
+        if path.exists() and not path.is_file():
             raise ToolInputError(
-                f"File already exists: {path}"
+                f"Target is not a regular file: {path}"
             )
 
         if not path.parent.is_dir():
@@ -84,7 +89,7 @@ class WriteTool:
             tool_name=self.spec().name,
             tool_use_id=None,
             description=(
-                f"Create file: {tool_input['file_path']}\n"
+                f"Write entire file (replace contents if it exists): {tool_input['file_path']}\n"
                 f"Content:\n{tool_input['content']}"
             ),
             targets=tuple(
@@ -111,8 +116,19 @@ class WriteTool:
         path = Path(tool_input["file_path"])
         content = tool_input["content"]
 
-        with path.open("x", encoding="utf-8") as file:
+        exists = path.exists()
+        if exists:
+            if not path.is_file():
+                raise ToolInputError(f"Target is not a regular file: {path}")
+            if not context.was_file_read_and_unchanged(path):
+                raise ToolInputError(
+                    "File cannot be overwritten: read it first and ensure it remains "
+                    "unchanged since the last read or write."
+                )
+
+        with path.open("w" if exists else "x", encoding="utf-8") as file:
             file.write(content)
+        context.mark_file_read(path)
 
         return ToolResult(
             name=self.spec().name,

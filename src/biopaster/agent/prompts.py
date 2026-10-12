@@ -39,6 +39,26 @@ TASK_UNDERSTANDING_PROMPT = """
     - Once the task is sufficiently clear, proceed without unnecessary confirmation.
 """
 
+TASK_EXECUTION_PROMPT = r"""
+# Task planning, execution, and troubleshooting
+
+When encountering an error, first look for
+relevant tutorials(including skills), to guide your next steps.
+
+Example:
+
+Assistant → executeCode:
+model.train()
+
+Tool (error excerpt):
+ValueError: Expected parameter loc ... to satisfy the constraint Real(),
+but found invalid values:
+tensor([[nan, nan, ...]])
+
+Assistant → webSearch:
+{"query": "scvi-tools scANVI \"Expected parameter loc\" \"found invalid values\" NaN"}
+"""
+
 TASK_MANAGEMENT_PROMPT = """
 # Task planning and progress management
 
@@ -415,6 +435,7 @@ Do not include Markdown, call tools, or output a reasoning trace.
 def assemble_system_prompt(context: ToolContext) -> str:
     sections = [IDENTITY_PROMPT,
                 TASK_UNDERSTANDING_PROMPT,
+                TASK_EXECUTION_PROMPT,
                 TASK_MANAGEMENT_PROMPT,
                 ANALYSIS_CODE_PROMPT,
                 SCIENTIFIC_CLAIMS_PROMPT,

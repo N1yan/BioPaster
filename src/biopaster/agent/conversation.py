@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Union
 from datetime import datetime
+from .loop_detection import LoopDetector
 
 @dataclass
 class TextContentBlock:
@@ -42,6 +43,7 @@ class Message:
 class Conversation:
     """Conversation manager."""
     messages: list[Message] = field(default_factory=list)
+    loop_detector: LoopDetector = field(default_factory=LoopDetector)
     
     def add_message(self, role: str, content: Union[str, list[ContentBlock]]):
         self.messages.append(Message(role=role, content=content))
@@ -161,7 +163,7 @@ class Conversation:
                 "_is_internal": message._is_internal,
             })
 
-        return {"messages": messages}
+        return {"messages": messages, "loop_detector": self.loop_detector.to_dict()}
     
     
     @classmethod
@@ -272,7 +274,7 @@ class Conversation:
                 _is_internal=internal,
             ))
 
-        return cls(messages=messages)
+        return cls(messages=messages, loop_detector=LoopDetector.from_dict(data.get("loop_detector")))
     
     
     def repair_pending_tool_results(self) -> list[str]:

@@ -1040,6 +1040,7 @@ class BioPasterStreamingREPL:
     
     def chat(self, user_input: str) -> None:
         self._close_execution_view()
+        self.conversation.loop_detector.begin_task()
         self.conversation.add_user_message(user_input)
         self._autosave_session(interrupted=True)
         view = ExecutionView(
@@ -1089,13 +1090,13 @@ class BioPasterStreamingREPL:
         else:
             interrupted = False
             self.session_log.record("agent_return", result)
-            self.session_log.end_run("returned")
+            self.session_log.end_run(result.subtype)
             if view.running:
-                view.finish(result.response_text)
+                view.finish(result.response_text, result.errors)
         finally:
             self._autosave_session(interrupted=interrupted)
 
-        if not interrupted and result.response_text.strip() and not self.title_attempted:
+        if not interrupted and result.subtype == "success" and result.response_text.strip() and not self.title_attempted:
             self.title_attempted = True
             # Persist the attempt before requesting a title; never lose the answer.
             self._autosave_session()

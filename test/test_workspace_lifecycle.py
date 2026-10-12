@@ -132,3 +132,24 @@ def test_resume_uses_saved_paths_or_keeps_active_session(runtime, tmp_path, miss
         assert active.tool_context.permission_context.workspace_root == workspace_a
         assert active.session_log.session_id == saved_id
         assert active.conversation.messages[0].content == "Saved in A"
+
+
+def test_interrupted_loop_state_survives_session_resume_without_logs(runtime, tmp_path):
+    saved = core.BioPasterStreamingREPL(workspace_root=tmp_path)
+    detector = saved.conversation.loop_detector
+    detector.begin_task()
+    for _ in range(3):
+        detector.begin_turn("Retry")
+        detector.record_result("Bash", {"command": "failing"}, "Failed", True)
+    saved.conversation.add_user_message(detector.confirm("Repeated failures"))
+    saved._save_session_snapshot(interrupted=True)
+    restored = core.BioPasterStreamingREPL(workspace_root=tmp_path)
+    restored._resume_session(saved.session_log.session_id)
+    state = restored.conversation.loop_detector
+    assert state.status == "running"
+    assert state.warned_at == 3
+    assert state.turn_count == 3
+    assert not saved.session_log.path.exists()
+    restored._new_session()
+    assert restored.conversation.loop_detector.warned_at is None
+    assert restored.conversation.loop_detector.turn_count == 0
