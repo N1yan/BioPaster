@@ -194,6 +194,7 @@ biopaster --workspace /path/to/project
 | `/model` | 用方向键选择已配置的模型，切换当前会话所用模型 |
 | `/new` | 保存已有对话并开始新会话，沿用工作区和 Notebook 路径 |
 | `/resume` | 用方向键选择并恢复历史会话 |
+| `/delete` | 选择非当前会话并确认永久删除其快照、日志、会话工具结果与任务记录；保留工作区文件 |
 | `/permissions` | 查看和调整当前会话的工具权限 |
 | `/multiline` | 切换多行输入模式 |
 | `/exit` 或 `/quit` | 退出 |
@@ -217,10 +218,12 @@ biopaster --workspace /path/to/project
 | `~/.biopaster/config.json` | 模型连接、API key、kernel 和 MCP 配置 |
 | `~/.biopaster/sessions/` | 会话快照与可选的事件日志 |
 | `~/.biopaster/tasks/` | 会话任务列表 |
-| `~/.biopaster/.tool_results/` | 持久化的工具结果 |
+| `~/.biopaster/sessions/<会话ID>/.tool_results/` | 该会话持久化的工具结果 |
 | 工作区 | 下载文件、分析产物和 Notebook |
 
 详细事件日志（`events.jsonl`）默认关闭。需要排查问题时，在配置中设置 `session.log_enabled` 为 `true` 并重启。关闭日志不影响会话快照和任务恢复；已有事件日志保留，但关闭期间不会继续追加。
+
+旧共享目录 `~/.biopaster/.tool_results/` 中的文件不会自动迁移或删除，已有引用仍可使用。新结果（包括恢复旧会话后产生的结果）存入对应会话目录，并随 `/delete` 一起删除。
 
 会话日志和工具结果可能包含输入资料、请求内容与输出，分享前请检查其中的信息。
 

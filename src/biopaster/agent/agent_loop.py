@@ -9,7 +9,6 @@ from ..tool_system.context import ToolContext
 from .prompts import assemble_system_prompt
 from ..tool_system.protocol import ToolResult, ToolCall
 from ..tool_system.persist import Persist
-from pathlib import Path
 from ..tool_system.map_result import map_tool_result
 from ..compact.micro_compact import micro_compact_messages
 from ..compact.auto_compact import (
@@ -49,16 +48,15 @@ def _safe_call_handler(handler: Callable | None, event: ToolEvent | ResultEvent)
     handler(event)
 
 # ── Tool Result Persist ──
-TOOL_RESULT_DIR = Path.home() / ".biopaster/.tool_results"
-persist = Persist(TOOL_RESULT_DIR, max_content_length=20000)
-
-def _process_tool_result(tool_result: ToolResult, tool_use_id):
-    tool_result = persist.persist(tool_result, tool_use_id)
+def _process_tool_result(tool_result: ToolResult, tool_use_id, context: ToolContext):
+    if context.session_log is None:
+        raise RuntimeError("A session is required to persist tool results.")
+    result_store = Persist(
+        context.session_log.directory / ".tool_results",
+        max_content_length=20000,
+    )
+    tool_result = result_store.persist(tool_result, tool_use_id)
     return map_tool_result(tool_result)
-    # if "gemma" in MODEL:
-    #     return map_tool_result_gemma(tool_result)
-    # else:
-    #     return map_tool_result(tool_result)
     
 def _emit_text_chunks(handler: Callable | None, text: str, *, chunk_size: int = 12) -> None:
     """Emit text in small chunks for user-visible streaming without changing loop semantics."""
@@ -320,7 +318,7 @@ def agent_loop(
                     )
                 )
                 
-                processed_result = _process_tool_result(result, tool_id)
+                processed_result = _process_tool_result(result, tool_id, tool_context)
                 conversation.add_tool_result_message(
                     tool_use_id=tool_id,
                     content=processed_result.output,

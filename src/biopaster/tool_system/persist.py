@@ -12,7 +12,6 @@ ALWAYS_SAVE = frozenset({"webfetch", "paperfetch"})
 
 class Persist:
     def __init__(self, save_dir: Path, max_content_length: int = 5000):
-        save_dir.mkdir(parents=True, exist_ok=True)
         self.save_dir = save_dir
         self.max_content_length = max_content_length
 
@@ -30,6 +29,7 @@ class Persist:
         block_index: int,
     ) -> Path:
         suffix = "" if block_index == 0 else f"_{block_index + 1}"
+        self.save_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         path = self.save_dir / f"BioPaster_{tool_result_name}_{tool_use_id}{suffix}.json"
         path.write_text(
             json.dumps(output, indent=4, ensure_ascii=False),

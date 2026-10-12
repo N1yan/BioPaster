@@ -9,6 +9,7 @@ from biopaster.agent.session import (
     save_session,
     list_sessions,
     load_session,
+    delete_session,
 )
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import Application
@@ -230,6 +231,7 @@ class BioPasterStreamingREPL:
             "/multiline",
             "/permissions",
             "/resume",
+            "/delete",
             "/new",
             "/model",
             "/exit",
@@ -286,6 +288,7 @@ class BioPasterStreamingREPL:
     - `/help` — Show available commands
     - `/multiline` — Toggle multiline input mode
     - `/resume` — Select and resume a saved session
+    - `/delete` — Select and permanently delete an inactive session, tool results and task records
     - `/new` — Save the current conversation and start a new one
     - `/model` — Select a configured provider and model
     - `/exit` — Exit BioPaster
@@ -315,6 +318,13 @@ class BioPasterStreamingREPL:
             return True
         
         parts = command.split()
+
+        if parts and parts[0] == "/delete":
+            if len(parts) == 1:
+                self._delete_session()
+            else:
+                self.console.print("Usage: /delete", style="yellow")
+            return True
 
         if parts and parts[0] == "/model":
             if len(parts) == 1:
@@ -683,6 +693,52 @@ class BioPasterStreamingREPL:
         self.console.rule("End of restored conversation")
         self.console.print()
             
+    def _delete_session(self) -> None:
+        if self._execution_view is not None and self._execution_view.running:
+            self.console.print("Cannot delete sessions while a request is running.", style="yellow")
+            return
+        try:
+            sessions, diagnostics = list_sessions()
+            sessions = [item for item in sessions
+                        if item["session_id"] != self.session_log.session_id]
+            for message in diagnostics:
+                self.console.print(f"Session warning: {message}", style="yellow", markup=False)
+            if not sessions:
+                self.console.print("No inactive saved sessions. Use /new before deleting the current session.")
+                return
+            sessions.sort(key=lambda item: datetime.fromisoformat(
+                item["updated_at"].replace("Z", "+00:00")
+            ).timestamp(), reverse=True)
+            selected = select_saved_session(
+                sessions, self.prompt_session,
+                heading="Delete session · ↑↓ select · Enter choose · Esc cancel",
+            )
+            if selected is None:
+                return
+            item = next(item for item in sessions if item["session_id"] == selected)
+            self.console.print(
+                f"Delete session: {item.get('title') or item.get('preview') or selected}\n"
+                f"ID: {selected}\n"
+                "This permanently removes its snapshot, event logs, session tool results and task records. "
+                "Workspace files and notebooks are kept.",
+                markup=False,
+            )
+            answer = self.prompt_session.prompt(
+                "Delete permanently? [y/N] ", completer=None, complete_while_typing=False,
+                multiline=False,
+            )
+            if answer.strip().lower() != "y":
+                self.console.print("Deletion cancelled.")
+                return
+            delete_session(selected, active_session_id=self.session_log.session_id)
+        except (KeyboardInterrupt, EOFError):
+            self.console.print("Deletion cancelled.")
+            return
+        except (OSError, ValueError) as exc:
+            self.console.print(f"Unable to delete session: {exc}", style="red", markup=False)
+            return
+        self.console.print("Session, session tool results and task records deleted permanently.", style="green")
+
     def _show_sessions(self) -> None:
         """Display saved session snapshots without loading them."""
         try:

@@ -4,6 +4,7 @@ import re
 import json
 import os
 import tempfile
+import shutil
 from datetime import datetime
 from .conversation import Conversation
 
@@ -216,6 +217,37 @@ def load_session(session_id: str) -> SessionSnapshot:
         )
 
     return snapshot
+
+
+def delete_session(session_id: str, *, active_session_id: str) -> None:
+    """Delete one inactive session, including its tool results, and task records."""
+    session_dir = _session_path(session_id).parent
+    if session_id == active_session_id:
+        raise ValueError("Cannot delete the active session. Start a new conversation first.")
+    task_dir = Path.home() / ".biopaster" / "tasks" / session_id
+    # Resolve exact targets before deleting either directory. Never follow a
+    # session-directory symlink into a workspace or another session.
+    for directory in (session_dir, task_dir):
+        if directory.is_symlink() or directory.resolve().parent != directory.parent.resolve():
+            raise ValueError(f"Refusing to delete a redirected session directory: {directory}")
+        if directory.exists() and not directory.is_dir():
+            raise ValueError(f"Expected a session directory: {directory}")
+    snapshot = load_session(session_id)
+    if snapshot.task_list_id != session_id:
+        raise ValueError("Task list does not belong to this session.")
+
+    removed = []
+    try:
+        for directory in (task_dir, session_dir):
+            if directory.exists():
+                shutil.rmtree(directory)
+                removed.append(str(directory))
+    except (OSError, KeyboardInterrupt) as exc:
+        detail = ", ".join(removed) or "none fully removed"
+        raise OSError(
+            f"Deletion did not finish; some files may have been removed. "
+            f"Directories fully removed: {detail}. {exc}"
+        ) from exc
 
 
 def list_sessions() -> tuple[list[dict], list[str]]:

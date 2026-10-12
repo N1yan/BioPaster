@@ -14,7 +14,7 @@ from biopaster.tool_system.permissions import (
     PermissionRule,
     PermissionTarget,
 )
-from biopaster.tool_system.persist import Persist
+from biopaster.agent.session_log import SessionLog
 from biopaster.tool_system.protocol import ToolCall, ToolResult
 from biopaster.tool_system.registry import ToolRegistry, ToolSpec
 
@@ -143,7 +143,7 @@ def test_interruption_preserves_results_and_allows_next_turn(
         loop, "auto_compact_messages", lambda **kwargs: SimpleNamespace(messages=kwargs["messages"])
     )
     monkeypatch.setattr(loop, "assemble_system_prompt", lambda context: "Test agent.")
-    monkeypatch.setattr(loop, "persist", Persist(tmp_path / "results"))
+    context.session_log = SessionLog(tmp_path / "sessions")
 
     class FakeProvider:
         context_window = 128_000
