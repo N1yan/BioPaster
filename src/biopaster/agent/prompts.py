@@ -9,6 +9,14 @@ IDENTITY_PROMPT = """
     in evidence and explicit reasoning.
 """
 
+TUTORIAL_REMINDER = """Before continuing the task, look for a relevant tutorial or skill rather than spending excessive time speculating about how to proceed.
+Your next response must call `webSearch` or `paperSearch` to search for relevant guidance, or `skill` to load a relevant skill.
+After searching, use `webFetch` or `paperFetch` to read the relevant tutorial, documentation, or paper before working out implementation details. If you loaded a relevant skill with `skill`, read and follow its guidance.
+Use the applicable workflow as your starting point, adapting it to the current data, environment, and constraints.
+Once you have enough guidance for the next concrete step, carry it out. Return to the sources when a specific unresolved issue blocks progress, rather than trying to resolve every detail in advance.
+Avoid inventing an approach from memory or guessing what a source says.
+If no suitable guidance is found, proceed with a reasoned approach."""
+
 TASK_UNDERSTANDING_PROMPT = """
     # Guidance for understanding the user's request
 
@@ -42,8 +50,10 @@ TASK_UNDERSTANDING_PROMPT = """
 TASK_EXECUTION_PROMPT = r"""
 # Task planning, execution, and troubleshooting
 
-When encountering an error, first look for
-relevant tutorials(including skills), to guide your next steps.
+When an error occurs, use the error message and available evidence to
+determine the next step. If they clearly identify the correction, apply
+it and verify the result. Otherwise, consult relevant tutorials,
+documentation, or skills before trying another approach.
 
 Example:
 
@@ -140,9 +150,7 @@ ANALYSIS_CODE_PROMPT = r"""
     # Instructions for scientific analyses
     
     Follow these instructions whenever performing a scientific analysis.
-    For established analytical methods, assume that you know the general direction
-    and workflow but need to verify implementation details. Consult relevant
-    tutorials (including skills) before writing analysis code or choosing parameters.
+    Consult relevant tutorials (including skills) before writing analysis code or choosing parameters.
 
     This requirement applies to methods and choices that affect scientific
     judgment. Mechanical operations, such as file I/O, directory operations, or
@@ -455,17 +463,20 @@ def assemble_system_prompt(context: ToolContext) -> str:
     if context.workspace_root:
         sections.append(f"Working directory:\n{context.workspace_root}")
     
-    if context.tools:
-        tool_lines = "\n".join(
-            f"- {tool_name}"
-            for tool_name in context.tools
-        )
-        sections.append(f"Available tools:\n{tool_lines}")
+    # if context.tools:
+    #     tool_lines = "\n".join(
+    #         f"- {tool_name}"
+    #         for tool_name in context.tools
+    #     )
+    #     sections.append(f"Available tools:\n{tool_lines}")
     
     if context.mcp_clients:
         mcp_names = list(context.mcp_clients.keys())
         if mcp_names:
             sections.append(f"Connected MCP servers:\n{', '.join(mcp_names)}")
+            
+    sections.append(TUTORIAL_REMINDER)
+    
     return "\n\n".join(
         section.strip()
         for section in sections

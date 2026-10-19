@@ -504,8 +504,11 @@ class PaperFetchTool:
         return ToolSpec(
             name="paperFetch",
             description=(
-                "Fetch readable full text for a paper. Provide exactly one of pmid, doi, pmcid, "
-                "or arxiv_id. Tries PMC XML, bioRxiv JATS/HTML, arXiv HTML, then OA HTML. "
+                "Fetch readable full text for a paper. Provide exactly one of pmid, doi, "
+                "pmcid, or arxiv_id. Tries PMC XML, bioRxiv JATS/HTML, arXiv HTML, "
+                "then OA HTML. "
+                "the returned content will be automatically saved to a local file. "
+                "Its path is provided in the tool_result_saved_path metadata field. "
             ),
             input_schema={
                 "type": "object",

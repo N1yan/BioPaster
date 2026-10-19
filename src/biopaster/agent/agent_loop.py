@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from ..tool_system.registry import ToolRegistry
 from .conversation import Conversation, TextContentBlock, ToolUseContentBlock
 from ..tool_system.context import ToolContext
-from .prompts import assemble_system_prompt
+from .prompts import assemble_system_prompt, TUTORIAL_REMINDER
 from ..tool_system.protocol import ToolResult, ToolCall
 from ..tool_system.persist import Persist
 from ..tool_system.map_result import map_tool_result
@@ -372,7 +372,7 @@ def agent_loop(
                 if on_checkpoint is not None:
                     on_checkpoint()
 
-        reason, check_usage = detector.check(provider, tool_context.session_log)
+        reason, check_usage, periodic_due = detector.check(provider, tool_context.session_log)
         for key in total_usage:
             total_usage[key] += check_usage.get(key, 0)
         if reason:
@@ -386,6 +386,8 @@ def agent_loop(
             conversation.add_user_message(reminder)
             if tool_context.session_log is not None:
                 tool_context.session_log.record("loop_feedback", {"turn": detector.turn_count, "reason": reason})
+        if periodic_due:
+            conversation.add_user_message(TUTORIAL_REMINDER)
         if on_checkpoint is not None:
             on_checkpoint()
 

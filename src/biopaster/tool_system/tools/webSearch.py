@@ -45,7 +45,9 @@ class WebSearchTool:
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="webSearch",
-            description="Search the web and return top results",
+            description=("Search the web and return titles, URLs, and snippets for relevant pages. "
+                        "Use these results to locate sources; snippets are not the full page content. "
+                        ),
             input_schema={
                 "type": "object",
                 "additionalProperties": False,

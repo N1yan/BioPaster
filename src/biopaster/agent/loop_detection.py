@@ -157,18 +157,30 @@ class LoopDetector:
         return [turn for turn in self.recent if turn["turn"] > (self.warned_at or 0)]
 
     def check(self, provider, log=None):
-        """Return (confirmation reason or None, checker usage). Fail open on errors."""
+        """Return (reason or None, usage, periodic_due). Fail open on errors.
+
+        The saved check boundary drives both semantic checks and reminders.
+        Early exact-repeat warnings do not shift the five-turn schedule.
+        """
+        boundary = (self.turn_count // 5) * 5
+        periodic_due = boundary > self.last_check
+
+        def checked(reason, usage):
+            # An interrupted check must remain due after session recovery.
+            if periodic_due:
+                self.last_check = boundary
+            return reason, usage, periodic_due
+
         window = self._window()
         calls = [call for turn in window for call in turn["calls"]]
         tail = calls[-3:]
         if len(tail) == 3 and all(call["is_error"] for call in tail) and len({call["signature"] for call in tail}) == 1:
             call = tail[-1]
-            return (f"Three consecutive identical failed calls to {call['name']}.\n"
-                    f"Arguments: {call['arguments']}\nResult: {call['output']}"), {}
+            return checked(f"Three consecutive identical failed calls to {call['name']}.\n"
+                           f"Arguments: {call['arguments']}\nResult: {call['output']}", {})
 
-        if self.turn_count - max(self.last_check, self.warned_at or 0) < 5:
-            return None, {}
-        self.last_check = self.turn_count
+        if not periodic_due:
+            return None, {}, False
         usage = {}
         try:
             # Keep the checker request small even when tools return large documents.
@@ -197,13 +209,13 @@ class LoopDetector:
                         or len(set(turns)) < 2 or not set(turns) <= available):
                     raise ValueError("Loop judgment must cite distinct available turns")
                 reason = f"Repeated approach in turns {turns}: {decision['reason']}"
-                return reason, usage
+                return checked(reason, usage)
             self.diagnostic = "No loop confirmed: " + decision["reason"]
         except Exception as exc:
             self.diagnostic = f"Loop check unavailable: {type(exc).__name__}: {exc}"
             if log is not None:
                 log.record_exception("loop_check_failed", exc)
-        return None, usage
+        return checked(None, usage)
 
     def confirm(self, reason):
         self.diagnostic = reason

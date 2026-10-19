@@ -183,9 +183,11 @@ class ExecuteCodeTool:
         return ToolSpec(
             name="executeCode",
             description=(
-                    "Execute code in a Jupyter notebook cell using one of the configured "
-                    "kernels. The kernels listed below were validated when BioPaster started. "
-                    f"Configured kernels. Available kernels: {kernel_details}."
+                "Execute code in a Jupyter notebook cell using one of the configured "
+                "kernels. Each call starts a fresh kernel: variables, imports, and "
+                "in-memory objects do not persist between calls. "
+                "The kernels listed below were validated when BioPaster started. "
+                f"Available kernels: {kernel_details}."
             ),
             input_schema={
                 "type": "object",

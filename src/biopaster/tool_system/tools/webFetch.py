@@ -117,8 +117,11 @@ class WebFetchTool:
         return ToolSpec(
             name="webFetch",
             description=(
-                "Fetch the text content of a webpage. Default method is http (urllib). "
-                "Use playwright for JavaScript-heavy pages or when http returns 403/blocked."
+                "Fetch the text content of a webpage. "
+                "Default method is http (urllib). Use playwright for JavaScript-heavy "
+                "pages or when http returns 403/blocked. "
+                "The returned content will automatically be saved to a local file. "
+                "Its path is provided in the tool_result_saved_path metadata field. "
             ),
             input_schema={
                 "type": "object",

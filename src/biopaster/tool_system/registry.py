@@ -62,6 +62,11 @@ class ToolRegistry:
     def list_specs(self) -> list[ToolSpec]:
         return [tool.spec() for tool in self._tools]
     
+    def get_spec(self, name: str) -> ToolSpec | None:
+        """Return a tool's specification, resolving registered aliases."""
+        tool = self._by_name.get(name.lower())
+        return tool.spec() if tool is not None else None
+    
     def list_tools(self) -> list[str]:
         return list(self._by_name.keys())
     

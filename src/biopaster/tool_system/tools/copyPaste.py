@@ -65,17 +65,23 @@ class CopyPasteTool:
                     },
                     "target_file": {
                         "type": "string",
-                        "description": "The path to the target file. And the file name must start with: BioPaster_evidence_",
+                        "description": "The path to the target file. And the file name must start with: BioPaster_evidence_. Its parent directory must already exist.",
                     },
                     "start_string": {
                         "type": "string",
-                        "description": ("The start string to copy from the source file."
-                                        "Note that the start string would be included in the copied content."),
+                        "description": (
+                            "The exact text marking the start of the passage to copy. "
+                            "It must occur exactly once in the source text and is included "
+                            "in the copied content."
+                        ),
                     },
                     "end_string": {
                         "type": "string",
-                        "description": ("The end string to copy from the source file."
-                                        "Note that the end string would be included in the copied content."),
+                        "description": (
+                            "The exact text marking the end of the passage to copy. "
+                            "It must occur exactly once in the source text, at or after "
+                            "the start marker, and is included in the copied content."
+                        ),
                     },
                     "usage":{
                         "type": "string",
