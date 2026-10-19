@@ -42,6 +42,8 @@ from biopaster.mcp.config import parse_mcp_servers
 from biopaster.mcp.manager import open_mcp_tools
 from biopaster.tool_system.registry import ToolRegistry
 from biopaster.providers.anthropic_provider import AnthropicProvider
+from biopaster.providers.openai_provider import OpenAIProvider
+from biopaster.providers.llama_cpp_provider import LlamaCppProvider
 from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.defaults import build_default_registry
 
@@ -354,15 +356,42 @@ class BioPasterStreamingREPL:
     
     @staticmethod
     def _build_provider(option):
-        return AnthropicProvider(
-            api_key=option["api_key"], base_url=option["base_url"],
-            model=option["model"], context_window=option["context_window"],
-            max_output_tokens=option["max_output_tokens"],
-            reasoning_effort=option.get("reasoning_effort"),
-            enable_thinking=option.get("enable_thinking"),
-            llama_cpp=option["provider"] == "local",
-        )
+        api_type = option.get("api_type", "anthropic")
+        backend = option.get("backend")
 
+        common = {
+            "api_key": option["api_key"],
+            "base_url": option["base_url"],
+            "model": option["model"],
+            "context_window": option["context_window"],
+            "max_output_tokens": option["max_output_tokens"],
+            "reasoning_effort": option.get("reasoning_effort"),
+            "enable_thinking": option.get("enable_thinking"),
+        }
+
+        if api_type == "anthropic" and backend is None:
+            return AnthropicProvider(
+                **common,
+                llama_cpp=option["provider"] == "local",
+            )
+
+        if api_type == "openai":
+            if backend == "llama_cpp":
+                return LlamaCppProvider(
+                    **common,
+                    thinking_timeout_seconds=option.get(
+                        "thinking_timeout_seconds"
+                    ),
+                )
+
+            if backend is None:
+                return OpenAIProvider(**common)
+
+        raise ValueError(
+            f"Unsupported API/backend combination: "
+            f"{api_type!r}/{backend!r}"
+        )
+    
     def _select_model(self) -> None:
         if self._execution_view is not None and self._execution_view.running:
             self.console.print("Cannot switch models while a request is running.", style="yellow")
@@ -390,7 +419,7 @@ class BioPasterStreamingREPL:
                 return
             option = options[int(selected)]
             new_provider = self._build_provider(option)
-            new_provider._ensure_client()
+            new_provider.validate_configuration()
             new_provider.session_log = self.session_log
         except Exception as exc:
             self.console.print(f"Unable to select model: {exc}", style="red", markup=False)
@@ -1065,6 +1094,8 @@ class BioPasterStreamingREPL:
                 ):
                     view.refresh_tasks()
 
+        result = None
+
         try:
             interrupted = True
             view.start()
@@ -1084,8 +1115,11 @@ class BioPasterStreamingREPL:
             self.session_log.end_run("interrupted")
             view.finish(errors=[f"Display error: {view.failure}" if view.failure else "Interrupted."])
         except Exception as e:
+            interrupted = False
+            self.conversation.loop_detector.status = "error"
+            self.conversation.loop_detector.diagnostic = str(e)
             self.session_log.record_exception("run_exception", e)
-            self.session_log.end_run("failed")
+            self.session_log.end_run("error")
             view.finish(errors=[f"Error: {e}"])
         else:
             interrupted = False
@@ -1096,7 +1130,13 @@ class BioPasterStreamingREPL:
         finally:
             self._autosave_session(interrupted=interrupted)
 
-        if not interrupted and result.subtype == "success" and result.response_text.strip() and not self.title_attempted:
+        if (
+            not interrupted
+            and result is not None
+            and result.subtype == "success"
+            and result.response_text.strip()
+            and not self.title_attempted
+        ):
             self.title_attempted = True
             # Persist the attempt before requesting a title; never lose the answer.
             self._autosave_session()

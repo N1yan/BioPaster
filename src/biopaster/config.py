@@ -6,6 +6,7 @@ import sys
 import warnings
 from typing import Any
 from jupyter_client.kernelspec import KernelSpecManager
+import math
 
 
 class ConfigError(ValueError):
@@ -106,6 +107,24 @@ def get_model_options(config: dict[str, Any]) -> list[dict[str, Any]]:
         for field in ("api_key", "base_url"):
             if not isinstance(connection.get(field), str) or not connection[field].strip():
                 raise ConfigError(f"{name}.{field} must be a non-empty string")
+        
+        api_type = connection.get("api_type", "anthropic")
+        if api_type not in ("anthropic", "openai"):
+            raise ConfigError(
+                f"{name}.api_type must be 'anthropic' or 'openai'"
+            )
+
+        backend = connection.get("backend")
+        if backend not in (None, "llama_cpp"):
+            raise ConfigError(
+                f"{name}.backend must be 'llama_cpp' or null"
+            )
+
+        if backend == "llama_cpp" and api_type != "openai":
+            raise ConfigError(
+                f"{name}.backend 'llama_cpp' requires api_type 'openai'"
+            )
+            
         models = connection.get("models")
         if not isinstance(models, list) or not models:
             raise ConfigError(f"{name}.models must be a non-empty list")
@@ -127,8 +146,29 @@ def get_model_options(config: dict[str, Any]) -> list[dict[str, Any]]:
             thinking = model.get("enable_thinking")
             if thinking is not None and type(thinking) is not bool:
                 raise ConfigError(f"enable_thinking must be a boolean or null for {name}/{model_id}")
+            
+            thinking_timeout = model.get("thinking_timeout_seconds")
+            if thinking_timeout is not None:
+                if (
+                    type(thinking_timeout) not in (int, float)
+                    or thinking_timeout <= 0
+                    or not math.isfinite(thinking_timeout)
+                ):
+                    raise ConfigError(
+                        f"thinking_timeout_seconds must be a positive finite "
+                        f"number or null for {name}/{model_id}"
+                    )
+
+                if backend != "llama_cpp":
+                    raise ConfigError(
+                        f"thinking_timeout_seconds requires backend 'llama_cpp' "
+                        f"for {name}/{model_id}"
+                    )
+                    
             options.append({
                 "provider": name,
+                "api_type": api_type,
+                "backend": backend,
                 "api_key": connection["api_key"],
                 "base_url": connection["base_url"],
                 "model": model_id,
@@ -136,6 +176,7 @@ def get_model_options(config: dict[str, Any]) -> list[dict[str, Any]]:
                 "max_output_tokens": output,
                 "reasoning_effort": effort,
                 "enable_thinking": thinking,
+                "thinking_timeout_seconds": thinking_timeout,
             })
     return options
 

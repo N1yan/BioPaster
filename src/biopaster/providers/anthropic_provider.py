@@ -34,6 +34,10 @@ class AnthropicProvider:
                                     base_url=self.base_url)
         return self.client
     
+    def validate_configuration(self) -> None:
+        """Validate configuration using the existing client initialization."""
+        self._ensure_client()
+    
     def _build_chat_response(self, response: Any) -> ChatResponse:
         """Convert Anthropic SDK response into the shared ChatResponse shape."""
         content_text = ""
