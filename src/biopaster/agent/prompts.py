@@ -15,6 +15,7 @@ After searching, use `webFetch` or `paperFetch` to read the relevant tutorial, d
 Use the applicable workflow as your starting point, adapting it to the current data, environment, and constraints.
 Once you have enough guidance for the next concrete step, carry it out. Return to the sources when a specific unresolved issue blocks progress, rather than trying to resolve every detail in advance.
 Avoid inventing an approach from memory or guessing what a source says.
+Do not guess implementation details, such as interface names, paths, parameters, input and output formats, prerequisites, or version-specific behavior. Verify unfamiliar or uncertain details by searching for relevant tutorials or consulting documentation, local help, or source code before relying on them.
 If no suitable guidance is found, proceed with a reasoned approach."""
 
 TASK_UNDERSTANDING_PROMPT = """
@@ -172,6 +173,12 @@ ANALYSIS_CODE_PROMPT = r"""
 
     3. Adapt its parameters and necessary portions to the current project, data, 
         and available resources. Then use executeCode tool to execute the code.
+
+        Implement and validate the analysis incrementally. Before running the
+        full workflow, execute the smallest meaningful part that can test the
+        current implementation. Inspect its actual outputs and resolve failures
+        before expanding to the full data or computation.
+
         Note: 
         - Parameter choices that affect scientific judgment must follow methods
         or principles supported by relevant tutorials or literature, taking the
@@ -226,6 +233,11 @@ ANALYSIS_CODE_PROMPT = r"""
 
     4. If execution fails, revisit the preceding steps to adjust the working
         code or find additional tutorials.
+
+    5. Before declaring completion, verify that the actual result satisfies
+        the user's request. Base this judgment on observed evidence, not merely
+        on whether the steps ran successfully. After making corrections,
+        verify the result again.
 """
 
 

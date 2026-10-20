@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from io import StringIO
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -31,7 +32,8 @@ from rich.table import Table
 from rich.text import Text
 
 from biopaster.agent.agent_loop import ToolEvent, ResultEvent, agent_loop
-from biopaster.agent.conversation import Conversation, TextContentBlock
+from biopaster.agent.conversation import Conversation
+from biopaster.agent.replay import ReplayHistory, ReplayTurn
 from biopaster.config import (
     get_configured_notebook_kernels,
     get_model_options,
@@ -49,7 +51,11 @@ from biopaster.tool_system.defaults import build_default_registry
 
 from biopaster.agent.session_log import SessionLog
 from biopaster.agent.session_title import generate_session_title
-from .execution_view import ExecutionView
+from .execution_view import (
+    ExecutionView,
+    format_permission_description,
+    is_displayed_bash_command,
+)
 from biopaster.tool_system.permissions import (
     PermissionRequest,
     PermissionAnswer,
@@ -249,6 +255,7 @@ class BioPasterStreamingREPL:
         self.title_attempted = False
 
         self.conversation = Conversation()
+        self.replay_history = ReplayHistory()
         self.provider = self._build_provider(model_config)
         
         self.provider.session_log = self.session_log
@@ -483,6 +490,7 @@ class BioPasterStreamingREPL:
 
         self._close_execution_view()
         self.conversation = Conversation()
+        self.replay_history = ReplayHistory()
         self.tool_context = new_context
         self.session_log = new_log
         self.provider.session_log = new_log
@@ -599,6 +607,7 @@ class BioPasterStreamingREPL:
         self._close_execution_view()
 
         self.conversation = snapshot.conversation
+        self.replay_history = snapshot.replay_history
         self.session_created_at = snapshot.created_at
         self.session_title = snapshot.title
         self.title_attempted = snapshot.title_attempted
@@ -687,40 +696,43 @@ class BioPasterStreamingREPL:
         self.console.print()
         self.console.rule("Restored conversation")
 
-        for message in self.conversation.messages:
-            if message._is_internal:
-                continue
-
-            if message.role not in {"user", "assistant"}:
-                continue
-
-            if isinstance(message.content, str):
-                text = message.content
-            else:
-                text = "\n\n".join(
-                    block.text
-                    for block in message.content
-                    if isinstance(block, TextContentBlock)
-                )
-
-            if not text.strip():
-                continue
-
-            if message.role == "user":
-                self.console.print(
-                    Text.assemble(
-                        ("❯ ", "bold cyan"),
-                        text,
-                    )
-                )
-            else:
-                self.console.print("BioPaster:", style="bold cyan")
-                self.console.print(Markdown(text))
-
-            self.console.print()
+        for turn in self.replay_history.turns:
+            self._print_replay_turn(self.console, turn)
 
         self.console.rule("End of restored conversation")
         self.console.print()
+
+    @staticmethod
+    def _print_replay_turn(console: Console, turn: ReplayTurn) -> None:
+        console.print(Text.assemble(("❯ ", "bold cyan"), turn.user))
+        console.print()
+        if turn.answer:
+            console.print("BioPaster:", style="bold cyan")
+            console.print(Markdown(turn.answer))
+        if turn.status != "success":
+            label = {
+                "pending": "本轮未完成。",
+                "interrupted": "本轮已中断。",
+                "error": "本轮失败。",
+            }[turn.status]
+            console.print(Text(label, style="yellow"))
+            for error in turn.errors:
+                console.print(Text(error, style="red"))
+        console.print()
+
+    def _render_resize_history(self, width: int) -> str:
+        """Render the text above the live view at the terminal's new width."""
+        output = StringIO()
+        console = Console(file=output, force_terminal=True, width=width)
+        self._print_startup_header(console)
+        for turn in self.replay_history.turns[:-1]:
+            self._print_replay_turn(console, turn)
+        if self.replay_history.turns:
+            # The live view owns this turn's answer, including after completion.
+            console.print(Text.assemble(
+                ("❯ ", "bold cyan"), self.replay_history.turns[-1].user
+            ))
+        return output.getvalue()
             
     def _delete_session(self) -> None:
         if self._execution_view is not None and self._execution_view.running:
@@ -828,36 +840,24 @@ class BioPasterStreamingREPL:
             self.console.print(
                 "Automatic permission review failed. "
                 "Falling back to manual approval.",
-                style="yellow",
+                style="magenta",
             )
             self.console.print(
                 f"Reason: {request.review_error}",
                 markup=False,
+                style="red",
             )
 
         self.console.print(
-            Text("Permission required", style="bold yellow")
+            Text("Permission required", style="bold cyan")
         )
         
         self.console.print(
-            f"Tool: {request.tool_name}",
-            markup=False,
+            Text.assemble(("Tool: ", "dim"), (request.tool_name, "bold cyan")),
         )
-        self.console.print(request.description, markup=False)
+        self.console.print(format_permission_description(request.description))
 
-        self.console.print("\nTargets:")
-        for target in request.targets:
-            content = (
-                target.rule_content
-                if target.rule_content is not None
-                else "entire tool"
-            )
-            self.console.print(
-                f"- {target.tool_name}: {content}",
-                markup=False,
-            )
-
-        self.console.print("\n1. Allow once")
+        self.console.print(Text.assemble(("\n1. ", "bold cyan"), ("Allow once", "green")))
 
         for index, rule in enumerate(request.suggestions, start=2):
             scope = (
@@ -865,13 +865,19 @@ class BioPasterStreamingREPL:
                 if rule.rule_content is None
                 else repr(rule.rule_content)
             )
+            label = (
+                "Allow once and remember this command for this session"
+                if is_displayed_bash_command(request, rule.tool_name, rule.rule_content)
+                else f"Allow once and remember for this session: {rule.tool_name} ({scope})"
+            )
             self.console.print(
-                f"{index}. Allow once and remember for this session: "
-                f"{rule.tool_name} ({scope})",
-                markup=False,
+                Text.assemble(
+                    (f"{index}. ", "bold cyan"),
+                    (label, "bold bright_blue" if rule.rule_content is None else "bright_blue"),
+                ),
             )
 
-        self.console.print("0. Deny")
+        self.console.print(Text.assemble(("0. ", "bold cyan"), ("Deny", "red")))
 
         while True:
             answer = self.prompt_session.prompt(
@@ -1018,7 +1024,8 @@ class BioPasterStreamingREPL:
             permissions.remove_rule(rules[index - 1])
             self.console.print("Selected permission rule removed.")
 
-    def _print_startup_header(self) -> None:
+    def _print_startup_header(self, console: Console | None = None) -> None:
+        console = console if console is not None else self.console
         information = Table.grid(padding=(0, 1))
         information.add_row(
             "Model",
@@ -1035,7 +1042,7 @@ class BioPasterStreamingREPL:
             ),
         )
 
-        self.console.print(
+        console.print(
             Panel(
                 information,
                 title="[bold cyan] BioPaster [/bold cyan]",
@@ -1044,7 +1051,7 @@ class BioPasterStreamingREPL:
                 padding=(1, 2),
             )
         )
-        self.console.print()
+        console.print()
 
     def _close_execution_view(self) -> None:
         view = self._execution_view
@@ -1071,20 +1078,31 @@ class BioPasterStreamingREPL:
         self._close_execution_view()
         self.conversation.loop_detector.begin_task()
         self.conversation.add_user_message(user_input)
+        replay_turn = ReplayTurn(user=user_input)
+        self.replay_history.turns.append(replay_turn)
         self._autosave_session(interrupted=True)
         view = ExecutionView(
             self.prompt_session,
             multiline=self.multiline_mode,
             task_store=self.tool_context.task_store,
+            render_history=self._render_resize_history,
         )
         self._execution_view = view
         view.refresh_tasks()
+        partial_answer = []
+
+        def on_text_chunk(text: str) -> None:
+            partial_answer.append(text)
+            view.append_text(text)
 
         def on_event(event: ToolEvent | ResultEvent) -> None:
             self.session_log.record("agent_event", event)
             if isinstance(event, ResultEvent):
                 view.finish(event.result, event.errors if event.is_error else [])
             else:
+                if event.kind == "tool_use":
+                    # Earlier text belongs to execution commentary.
+                    partial_answer.clear()
                 view.tool_event(event)
                 if (
                     event.kind in {"tool_result", "tool_error"}
@@ -1106,7 +1124,7 @@ class BioPasterStreamingREPL:
                 tool_context=self.tool_context,
                 max_turns=500,
                 stream=self.stream,
-                on_text_chunk=view.append_text,
+                on_text_chunk=on_text_chunk,
                 on_event=on_event,
                 on_checkpoint=lambda: self._autosave_session(interrupted=True),
             )
@@ -1128,6 +1146,12 @@ class BioPasterStreamingREPL:
             if view.running:
                 view.finish(result.response_text, result.errors)
         finally:
+            replay_turn.answer = result.response_text if result is not None else "".join(partial_answer)
+            replay_turn.status = (
+                "interrupted" if interrupted else
+                "success" if result is not None and result.subtype == "success" else "error"
+            )
+            replay_turn.errors = list(result.errors if result is not None else view.errors)
             self._autosave_session(interrupted=interrupted)
 
         if (
@@ -1153,6 +1177,9 @@ class BioPasterStreamingREPL:
                 self._autosave_session()
 
     def run(self) -> None:
+        if sys.stdout.isatty():
+            sys.stdout.write("\033[2J\033[3J\033[H")
+            sys.stdout.flush()
         self._print_startup_header()
         user_skills_dir = (
             Path.home() / ".biopaster" / "skills"
@@ -1295,6 +1322,7 @@ class BioPasterStreamingREPL:
             interrupted=interrupted,
             title=self.session_title,
             title_attempted=self.title_attempted,
+            replay_history=self.replay_history,
         )
 
         save_session(snapshot)

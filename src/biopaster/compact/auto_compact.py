@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import json
 import math
 from typing import Any
+import time
+import httpx
 
 
 COMPACT_SYSTEM_PROMPT = """
@@ -72,20 +74,56 @@ def _extract_summary(text) -> str:
 
     return text.strip()
 
+
+def _is_retryable_compact_error(error: Exception) -> bool:
+    if isinstance(error, ExceptionGroup):
+        return all(
+            _is_retryable_compact_error(child)
+            for child in error.exceptions
+        )
+
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int):
+        return (
+            status_code in {408, 409, 429}
+            or 500 <= status_code < 600
+        )
+
+    return (
+        isinstance(
+            error,
+            (
+                TimeoutError,
+                ConnectionError,
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
+            ),
+        )
+        or type(error).__name__ in {
+            "APIConnectionError",
+            "APITimeoutError",
+        }
+    )
+
 def _generate_compact_summary(
     messages: list[dict[str, Any]],
     provider,
     max_tokens: int
     ) -> tuple[str, int]:
     
-    messages.append({"role": "user", "content": COMPACT_PROMPT})
-    
+    summary_messages = [
+        *messages,
+        {"role": "user", "content": COMPACT_PROMPT},
+    ]
+
     response = provider.chat_stream_response(
-        messages,
+        summary_messages,
         tools=None,
         system=COMPACT_SYSTEM_PROMPT,
         max_tokens=max_tokens,
         on_text_chunk=None,
+        max_retries=0,
     )
     
     if response.tool_uses:
@@ -200,25 +238,34 @@ def auto_compact_messages(
                 pre_compact_tokens=input_tokens,
             )
     
-    try:
-        summary, summary_tokens = _generate_compact_summary(
-            messages=api_messages,
-            provider=provider,
-            max_tokens=_get_summary_max_tokens(
-                context_window=context_window,
-                model_max_output_tokens=model_max_output_tokens,
-            ),
-        )
-    except Exception as e:
-        state.consecutive_failures += 1
-        return AutoCompactResult(
-            messages=messages,
-            was_compacted=False,
-            pre_compact_tokens=input_tokens,
-            error=str(e),
-        )
+    for attempt in range(1, MAX_CONSECUTIVE_FAILURES + 1):
+        try:
+            summary, summary_tokens = _generate_compact_summary(
+                messages=api_messages,
+                provider=provider,
+                max_tokens=_get_summary_max_tokens(
+                    context_window=context_window,
+                    model_max_output_tokens=model_max_output_tokens,
+                ),
+            )
+        except Exception as error:
+            state.consecutive_failures += 1
 
-    
+            if (
+                attempt == MAX_CONSECUTIVE_FAILURES
+                or not _is_retryable_compact_error(error)
+            ):
+                return AutoCompactResult(
+                    messages=messages,
+                    was_compacted=False,
+                    pre_compact_tokens=input_tokens,
+                    error=f"{type(error).__name__}: {error}",
+                )
+
+            time.sleep(attempt)
+        else:
+            break
+
     state.consecutive_failures = 0
     
     summary_message = Message(

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 from io import StringIO
-import json
 import os
 import signal
 import threading
@@ -30,6 +29,36 @@ from biopaster.agent.agent_loop import ToolEvent
 from biopaster.tool_system.permissions import PermissionAnswer
 
 
+def format_permission_description(description: str) -> Text:
+    content_fields = {"Command", "Code", "Content", "Old text", "New text", "Markdown", "Arguments"}
+    info_fields = {
+        "Working directory", "Kernel", "Language", "Environment",
+        "Notebook", "Permission analysis", "Replace all",
+    }
+    text = Text()
+    content_style = None
+    for line in description.splitlines(keepends=True):
+        label, separator, value = line.partition(":")
+        if separator and label in content_fields | info_fields:
+            content_style = "bold bright_blue" if label in content_fields else None
+            text.append(label + separator, style="dim")
+            text.append(value, style=content_style)
+        else:
+            text.append(line, style=content_style)
+    return text
+
+
+def is_displayed_bash_command(request, tool_name, scope):
+    """Recognize the exact command already included by Bash's description."""
+    return (
+        request.tool_name.casefold() == tool_name.casefold() == "bash"
+        and bool(scope)
+        and any(rule.tool_name.casefold() == "bash" and rule.rule_content == scope
+                for rule in request.suggestions)
+        and f"Command:\n{scope}" in request.description
+    )
+
+
 class ExecutionView:
     """Keep native editing/completion and add only a render region and bindings.
 
@@ -39,8 +68,11 @@ class ExecutionView:
     changes are restored when the next question is submitted or the view closes.
     """
 
-    def __init__(self, session, *, multiline=False, interrupt=None, task_store=None):
+    def __init__(self, session, *, multiline=False, interrupt=None, task_store=None,
+                 render_history=None):
         self.session = session
+        self.render_history = render_history
+        self._terminal_size = None
         self._container = next(c for c in walk(session.app.layout.container)
                                if isinstance(c, FloatContainer))
         self.multiline = multiline
@@ -155,6 +187,10 @@ class ExecutionView:
     def permission_pending(self):
         return self._permission is not None
 
+    @property
+    def can_scroll(self):
+        return self.expanded or self.permission_pending or not self.running
+
     def _height(self):
         rows = self.session.app.output.get_size().rows
         # Header and footer each use one row. Keep the total execution region
@@ -176,9 +212,11 @@ class ExecutionView:
             if self.permission_pending:
                 label = "Permission required"
             elif self.expanded:
-                label = "▼ Execution details · Ctrl+O to collapse · PgUp/PgDn to scroll"
+                label = "▼ Execution details · Ctrl+O to collapse"
             else:
                 label = "▶ Execution details · Ctrl+O to expand"
+            if self.can_scroll:
+                label += " · PgUp/PgDn to scroll"
             return [("class:execution.border", self._separator(label))]
 
     def _changed(self):
@@ -228,23 +266,33 @@ class ExecutionView:
             self.status = "Failed" if self.errors else "Completed"
             self._changed()
 
-    @staticmethod
-    def _literal(value):
-        return Text(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2, default=str))
-
     def _permission_lines(self):
         request = self._permission
-        lines = ["Permission required", f"Tool: {request.tool_name}", request.description]
+        lines = [
+            Text("Permission required", style="bold cyan"),
+            Text.assemble(("Tool: ", "dim"), (request.tool_name, "bold cyan")),
+            format_permission_description(request.description),
+        ]
         if request.review_error:
-            lines += ["Automatic permission review failed.", request.review_error]
-        for target in request.targets:
-            lines.append(f"- {target.tool_name}: {target.rule_content if target.rule_content is not None else 'entire tool'}")
-        lines.append("1. Allow once")
+            lines += [
+                Text("Automatic permission review failed.", style="magenta"),
+                Text(request.review_error, style="red"),
+            ]
+        lines.append(Text.assemble(("1. ", "bold cyan"), ("Allow once", "green")))
         for index, rule in enumerate(request.suggestions, 2):
             scope = rule.rule_content if rule.rule_content is not None else "entire tool"
-            lines.append(f"{index}. Allow once and remember for this session: {rule.tool_name} ({scope})")
-        lines.append("0. Deny")
-        return "\n".join(lines)
+            style = "bold bright_blue" if rule.rule_content is None else "bright_blue"
+            label = (
+                "Allow once and remember this command for this session"
+                if is_displayed_bash_command(request, rule.tool_name, rule.rule_content)
+                else f"Allow once and remember for this session: {rule.tool_name} ({scope})"
+            )
+            lines.append(Text.assemble(
+                (f"{index}. ", "bold cyan"),
+                (label, style),
+            ))
+        lines.append(Text.assemble(("0. ", "bold cyan"), ("Deny", "red")))
+        return Text("\n").join(lines)
 
     def _render(self):
         with self._lock:
@@ -254,16 +302,14 @@ class ExecutionView:
             if key != self._render_key:
                 parts = [Text("BioPaster :", style="bold cyan")]
                 if self.permission_pending:
-                    parts.append(Text(self._permission_lines()))
+                    parts.append(self._permission_lines())
                 else:
                     entries = self.entries if self.expanded else self.entries[-4:] if self.running else []
                     for entry in entries:
                         if entry["kind"] == "text":
                             parts.append(Markdown(entry["text"], hyperlinks=False))
                         else:
-                            parts.append(Text(f"{entry['name']} · {entry['status']}", style="red" if entry["status"] == "Failed" else "dim"))
-                            if entry["status"] == "Failed" and entry.get("output") is not None:
-                                parts.append(self._literal(entry["output"]))
+                            parts.append(Text(f"{entry['name']} · {entry['status']}", style="dim"))
                     if self.running:
                         parts.append(Text(f"{'⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[frame]} {self.status}", style="cyan"))
                     if self.result:
@@ -329,7 +375,7 @@ class ExecutionView:
                 self.scroll_line = max(0, min(self._line_count - 1, self.scroll_line + amount))
             self.session.app.invalidate()
 
-        scrollable = Condition(lambda: self.expanded or self.permission_pending or not self.running)
+        scrollable = Condition(lambda: self.can_scroll)
         @bindings.add("pageup", filter=scrollable)
         def page_up(event):
             scroll(-max(1, self.window.render_info.window_height - 1) if self.window.render_info else -5)
@@ -381,6 +427,25 @@ class ExecutionView:
         self.follow_tail = self.running
         self._changed()
 
+    def _before_render(self, app):
+        size = app.output.get_size()
+        previous = self._terminal_size
+        self._terminal_size = size
+        if previous is None or size == previous or app.is_done or self.render_history is None:
+            return
+
+        # Reflow can push parts of the old live area into terminal scrollback,
+        # where cursor-up/erase-down cannot reach them. Rebuild the visible
+        # conversation before prompt_toolkit paints the current live area.
+        history = self.render_history(max(1, size.columns - 1))
+        app.renderer.reset()
+        app.output.erase_screen()
+        app.output.write_raw("\033[3J")
+        app.output.cursor_goto(0, 0)
+        app.output.write_raw(history.replace("\n", "\r\n"))
+        app.output.flush()
+        app.renderer.request_absolute_cursor_position()
+
     def _run(self):
         session = self.session
         # Insert inside the existing completion FloatContainer, preserving all
@@ -392,6 +457,8 @@ class ExecutionView:
         original_erase = session.app.erase_when_done
         self._original_accept = session.default_buffer.accept_handler
         try:
+            self._terminal_size = session.app.output.get_size()
+            session.app.before_render += self._before_render
             container.content = HSplit([
                 self.header_window,
                 self.window,
@@ -414,6 +481,7 @@ class ExecutionView:
             self.failure = exc if not isinstance(exc, (EOFError, KeyboardInterrupt)) else None
             self._next_input.set_exception(exc)
         finally:
+            session.app.before_render -= self._before_render
             container.content = original_content
             session.default_buffer.accept_handler = self._original_accept
             session.app.erase_when_done = original_erase

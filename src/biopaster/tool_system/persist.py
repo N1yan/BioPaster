@@ -1,11 +1,11 @@
 from __future__ import annotations
-
 from copy import deepcopy
 from dataclasses import replace
 import json
 from pathlib import Path
-
+from .map_result import map_tool_result
 from .protocol import ToolResult
+
 
 ALWAYS_SAVE = frozenset({"webfetch", "paperfetch"})
 
@@ -44,15 +44,18 @@ class Persist:
         if name in {"read", "skill"}:
             return replace(tool_result, output=outputs)
 
-        for index, output in enumerate(outputs):
-            # images cannot be truncated
-            if output["type"] != "text":
-                continue
+        mapped = map_tool_result(tool_result)
+        total_chars = sum(
+            len(block["text"])
+            for block in mapped.output
+            if block["type"] == "text"
+        )
 
-            content_text = self._content_text(output["content"])
-            preview_truncated = len(content_text) > self.max_content_length
+        if name in ALWAYS_SAVE or total_chars > self.max_content_length:
+            for index, output in enumerate(outputs):
+                if output["type"] != "text":
+                    continue
 
-            if name in ALWAYS_SAVE or preview_truncated:
                 path = self._write_output(
                     tool_result.output[index],
                     name,
@@ -61,13 +64,7 @@ class Persist:
                 )
                 output["metadata"]["tool_result_saved_path"] = str(path)
 
-            if preview_truncated:
-                output["content"] = content_text[:self.max_content_length]
-                output["metadata"]["preview_truncated"] = True
-                output["metadata"]["preview_total_chars"] = len(content_text)
-
         return replace(tool_result, output=outputs)
-
 
 if __name__ == "__main__":
     tool_result = ToolResult(

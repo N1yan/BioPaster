@@ -1,11 +1,11 @@
 """Offline regression tests for permission enforcement and interruption recovery."""
 
 import importlib
-from types import SimpleNamespace
 
 import pytest
 
 from biopaster.agent.conversation import Conversation
+from biopaster.compact.auto_compact import AutoCompactResult
 from biopaster.providers.base import ChatResponse
 from biopaster.tool_system.context import ToolContext
 from biopaster.tool_system.permissions import (
@@ -17,6 +17,7 @@ from biopaster.tool_system.permissions import (
 from biopaster.agent.session_log import SessionLog
 from biopaster.tool_system.protocol import ToolCall, ToolResult
 from biopaster.tool_system.registry import ToolRegistry, ToolSpec
+from biopaster.tool_system.errors import ToolPermissionError
 
 
 class CounterTool:
@@ -119,6 +120,47 @@ def test_partial_rule_save_failure_rolls_back(setup_tool, monkeypatch):
     assert permissions.session_rules == previous_rules
 
 
+def test_manual_prompt_omits_already_allowed_targets_but_review_receives_all(tmp_path):
+    context = ToolContext(workspace_root=tmp_path)
+    permissions = context.permission_context
+    allowed = PermissionTarget("Read", str(tmp_path))
+    pending = PermissionTarget("Bash", "some-command")
+    request = PermissionRequest(
+        "Bash", "test", "Run some-command", (pending, allowed),
+        (PermissionRule("Bash", "some-command"), PermissionRule("Read", str(tmp_path))),
+    )
+    reviewed, prompted = [], []
+    from biopaster.tool_system.permissions import PermissionReviewResult
+    permissions.mode = "auto"
+    def review(request, decisions):
+        reviewed.append(request)
+        return PermissionReviewResult("ask", "Requires confirmation")
+    def approve(request):
+        prompted.append(request)
+        return PermissionAnswer(True, (request.suggestions[0],))
+    permissions.review_handler = review
+    permissions.permission_handler = approve
+    permissions.authorize(request)
+    assert reviewed[0].targets == (pending, allowed)
+    assert prompted[0].targets == (pending,)
+    assert prompted[0].suggestions == (request.suggestions[0],)
+    assert request.targets == (pending, allowed)
+    assert permissions.evaluate(pending).behavior == "allow"
+
+
+def test_denied_target_still_blocks_before_manual_prompt(tmp_path):
+    permissions = ToolContext(workspace_root=tmp_path).permission_context
+    denied = PermissionTarget("Read", str(tmp_path / "secret"))
+    permissions.add_rule(PermissionRule("Read", denied.rule_content, behavior="deny"))
+    prompted = []
+    permissions.permission_handler = lambda request: prompted.append(request)
+    with pytest.raises(ToolPermissionError):
+        permissions.authorize(PermissionRequest(
+            "Bash", "test", "Command", (PermissionTarget("Bash", "command"), denied), ()
+        ))
+    assert not prompted
+
+
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, EOFError])
 @pytest.mark.parametrize("interrupt_at", [1, 2, 3])
 def test_interruption_preserves_results_and_allows_next_turn(
@@ -140,7 +182,11 @@ def test_interruption_preserves_results_and_allows_next_turn(
     # Keep the real loop and result conversion; isolate unrelated compaction and storage.
     monkeypatch.setattr(loop, "micro_compact_messages", lambda messages, **kwargs: messages)
     monkeypatch.setattr(
-        loop, "auto_compact_messages", lambda **kwargs: SimpleNamespace(messages=kwargs["messages"])
+        loop,
+        "auto_compact_messages",
+        lambda **kwargs: AutoCompactResult(
+            messages=kwargs["messages"], was_compacted=False,
+        ),
     )
     monkeypatch.setattr(loop, "assemble_system_prompt", lambda context: "Test agent.")
     context.session_log = SessionLog(tmp_path / "sessions")

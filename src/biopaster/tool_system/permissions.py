@@ -467,8 +467,20 @@ class ToolPermissionContext:
                 f"{request.tool_name}."
             )
 
+        pending_targets = tuple(
+            target for target, decision in zip(request.targets, decisions)
+            if decision.behavior == "ask"
+        )
+        display_request = replace(
+            request,
+            targets=pending_targets,
+            suggestions=tuple(
+                rule for rule in request.suggestions
+                if any(self._rule_matches(rule, target) for target in pending_targets)
+            ),
+        )
         try:
-            answer = self.permission_handler(request)
+            answer = self.permission_handler(display_request)
         except (KeyboardInterrupt, EOFError):
             self.record_permission_decision(
                 tool_name=request.tool_name,

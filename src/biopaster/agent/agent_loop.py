@@ -50,16 +50,26 @@ def _safe_call_handler(handler: Callable | None, event: ToolEvent | ResultEvent)
     handler(event)
 
 # ── Tool Result Persist ──
-def _process_tool_result(tool_result: ToolResult, tool_use_id, context: ToolContext):
+def _process_tool_result(
+    tool_result: ToolResult,
+    tool_use_id: str,
+    context: ToolContext,
+):
     if context.session_log is None:
         raise RuntimeError("A session is required to persist tool results.")
+
     result_store = Persist(
         context.session_log.directory / ".tool_results",
         max_content_length=20000,
     )
+
     tool_result = result_store.persist(tool_result, tool_use_id)
-    return map_tool_result(tool_result)
-    
+
+    return map_tool_result(
+        tool_result,
+        max_text_chars=result_store.max_content_length,
+    )
+
 def _emit_text_chunks(handler: Callable | None, text: str, *, chunk_size: int = 12) -> None:
     """Emit text in small chunks for user-visible streaming without changing loop semantics."""
     if handler is None or not text:
@@ -194,7 +204,19 @@ def agent_loop(
             **{"tool_schemas": tool_schemas, "system": system_prompt}
         )
         
+        if compacted_result.error is not None:
+            return finish_run(
+                text="",
+                subtype="error_compaction",
+                errors=[
+                    f"Conversation compaction failed: {compacted_result.error}"
+                ],
+                on_event=on_event,
+                turn_count=turn_count,
+                total_usage=total_usage,
+            )
         conversation.messages = compacted_result.messages
+        
         if tool_context.task_store is not None and compacted_result.was_compacted:
             try:
                 has_tasks = bool(tool_context.task_store.list_tasks())

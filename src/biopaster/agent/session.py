@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import json
@@ -7,6 +7,7 @@ import tempfile
 import shutil
 from datetime import datetime
 from .conversation import Conversation
+from .replay import ReplayHistory
 
 
 
@@ -31,6 +32,7 @@ class SessionSnapshot:
     version: int = 1
     title: str | None = None
     title_attempted: bool = False
+    replay_history: ReplayHistory = field(default_factory=ReplayHistory)
 
     def to_dict(self) -> dict:
         """Convert the snapshot into JSON-compatible data."""
@@ -53,6 +55,7 @@ class SessionSnapshot:
             "interrupted": self.interrupted,
             "title": self.title,
             "title_attempted": self.title_attempted,
+            "replay_history": self.replay_history.to_dict(),
         }
         
     @classmethod
@@ -149,6 +152,7 @@ class SessionSnapshot:
             version=version,
             title=title,
             title_attempted=title_attempted,
+            replay_history=ReplayHistory.from_dict(data.get("replay_history")),
         )
         
         
