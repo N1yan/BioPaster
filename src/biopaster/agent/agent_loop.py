@@ -7,6 +7,7 @@ from ..tool_system.registry import ToolRegistry
 from .conversation import Conversation, TextContentBlock, ToolUseContentBlock
 from ..tool_system.context import ToolContext
 from .prompts import assemble_system_prompt, TUTORIAL_REMINDER
+from .task_context import format_task_context
 from ..tool_system.protocol import ToolResult, ToolCall
 from ..tool_system.persist import Persist
 from ..tool_system.map_result import map_tool_result
@@ -409,7 +410,19 @@ def agent_loop(
             if tool_context.session_log is not None:
                 tool_context.session_log.record("loop_feedback", {"turn": detector.turn_count, "reason": reason})
         if periodic_due:
-            conversation.add_user_message(TUTORIAL_REMINDER)
+            try:
+                task_context = format_task_context(tool_context.task_store)
+            except Exception as exc:
+                task_context = (
+                    "\n\nTask state could not be read for this reminder. "
+                    "Do not infer that the plan is empty or complete. "
+                    "Use TaskList to retrieve the current state."
+                )
+                if tool_context.session_log is not None:
+                    tool_context.session_log.record_exception(
+                        "task_reminder_read_failed", exc
+                    )
+            conversation.add_user_message(TUTORIAL_REMINDER + task_context)
         if on_checkpoint is not None:
             on_checkpoint()
 

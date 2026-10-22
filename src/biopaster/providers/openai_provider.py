@@ -321,13 +321,14 @@ class OpenAIProvider:
 
     @staticmethod
     def _get_client_class():
-        """Load the optional SDK only when this provider needs it."""
+        """Load the SDK when this provider needs it."""
         try:
             from openai import AsyncOpenAI
         except ImportError as exc:
             raise ImportError(
-                "OpenAI support requires the optional dependency: "
-                "pip install '.[openai]' from the BioPaster project directory."
+                "The required openai dependency is missing. "
+                "Run 'python -m pip install .' from the BioPaster project directory "
+                "in the environment used to run BioPaster."
             ) from exc
 
         return AsyncOpenAI

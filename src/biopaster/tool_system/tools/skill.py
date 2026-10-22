@@ -139,6 +139,14 @@ class SkillTool:
                             "skill_name": tool_input["skill"],
                             "skill_path": str(path.absolute()),
                             "skill_directory": str(path.absolute().parent),
+                            "path_usage": (
+                                "When needed, use the exact path in `skill_directory` "
+                                "to access this skill's files.\n\n"
+                                "For example, if `skill_directory` is "
+                                "`/path/to/skills/example` and the skill references "
+                                "`references/guide.md`, the full path is "
+                                "`/path/to/skills/example/references/guide.md`."
+                            ),
                             },
                     }],
                 )

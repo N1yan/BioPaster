@@ -15,10 +15,11 @@ from jupyter_client import AsyncKernelManager
 
 REFERENCE_HEADER = f"#{"-"*20}Reference{"-"*20}\n"
 COPIED_CONTENT_HEADER = f"#{"-"*20}Copied Content{"-"*20}\n"
+DEFAULT_TIMEOUT_SECONDS = 300
 
 def _run_notebook_cell(
     code: str,
-    timeout: int = 60,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
     kernel_name: str = "python3",
     cwd: str | None = None
 ):
@@ -205,7 +206,7 @@ class ExecuteCodeTool:
                         ),
                     },
                     "cwd": {"type": "string"},
-                    "timeout_s": {"type": "integer", "default": 60},
+                    "timeout_s": {"type": "integer", "default": DEFAULT_TIMEOUT_SECONDS},
                     "kernel": {
                         "type": "string",
                         "enum": list(self.kernels.keys()),
@@ -244,7 +245,7 @@ class ExecuteCodeTool:
             raise ToolInputError(
                 f"Unsupported kernel: {kernel}. Available kernels: {available}"
             )
-        timeout = tool_input.get("timeout_s", 60)
+        timeout = tool_input.get("timeout_s", DEFAULT_TIMEOUT_SECONDS)
         if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
             raise ToolInputError("timeout_s must be a positive integer")
         if context.notebook_path is None:

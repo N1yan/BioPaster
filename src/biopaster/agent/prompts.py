@@ -9,14 +9,72 @@ IDENTITY_PROMPT = """
     in evidence and explicit reasoning.
 """
 
-TUTORIAL_REMINDER = """Before continuing the task, look for a relevant tutorial or skill rather than spending excessive time speculating about how to proceed.
-Your next response must call `webSearch` or `paperSearch` to search for relevant guidance, or `skill` to load a relevant skill.
-After searching, use `webFetch` or `paperFetch` to read the relevant tutorial, documentation, or paper before working out implementation details. If you loaded a relevant skill with `skill`, read and follow its guidance.
-Use the applicable workflow as your starting point, adapting it to the current data, environment, and constraints.
-Once you have enough guidance for the next concrete step, carry it out. Return to the sources when a specific unresolved issue blocks progress, rather than trying to resolve every detail in advance.
-Avoid inventing an approach from memory or guessing what a source says.
-Do not guess implementation details, such as interface names, paths, parameters, input and output formats, prerequisites, or version-specific behavior. Verify unfamiliar or uncertain details by searching for relevant tutorials or consulting documentation, local help, or source code before relying on them.
-If no suitable guidance is found, proceed with a reasoned approach."""
+TUTORIAL_REMINDER = """Choose the next meaningful action based on the current step or task in the plan, completed work, and observed results, taking into account any errors encountered.
+
+# Gather information
+
+## When information is needed
+
+You MUST obtain the missing information before proceeding when:
+- The current task or plan depends on information that is missing or unclear.
+- An implementation detail required for the current step is unfamiliar or uncertain.
+- An execution problem cannot be resolved reliably from the available evidence.
+
+Receiving this reminder is NOT itself a reason to search. Information gathering MUST address a specific need in the current task.
+Do NOT investigate details that are unnecessary for the current step.
+
+## How to gather information
+
+Do NOT invent an approach from memory or guess what the reference material says.
+Do NOT treat an unverified assumption as an established fact.
+
+You MUST verify unfamiliar or uncertain implementation details before relying on them, including:
+- Whether an attribute, function, class, module, or command exists, and where it is defined or exposed.
+- The names and availability of existing variables, objects, files, and directories.
+- Parameter names, order, types, defaults, and required arguments.
+- Input formats, dimensions, field names, units, and accepted values.
+- Return types, fields, and where results are stored.
+- Prerequisites, execution order, side effects, and automatic behavior.
+- Version-specific behavior, API endpoints, and request formats.
+
+When additional guidance is needed, you MUST follow this order:
+1. If an available skill directly covers the current step, load and use it first. Otherwise, consult a relevant tutorial or usage example. Guidance for a different stage does NOT satisfy this requirement.
+2. Use public API documentation or local help ONLY to resolve specific details that remain unclear after consulting the applicable guidance.
+3. Inspect implementation source code ONLY when the preceding methods cannot resolve the specific question. Locate the relevant definition and read only the necessary portion.
+
+Do NOT skip an applicable skill or tutorial and jump directly to implementation source.
+Do NOT browse entire modules, enumerate internal methods, or trace library internals merely to learn how to use a documented interface.
+Use the first reference that adequately resolves the current uncertainty; do NOT work through every level unnecessarily.
+
+For example:
+- Use `skill` to load a relevant available skill.
+- Use `webSearch` or `paperSearch` to find guidance, then `webFetch` or `paperFetch` to read the relevant material.
+- Inspect the local environment to establish what is actually installed, available, or supported.
+
+For example, when using code or shell commands to inspect the local environment:
+- Python: module locations and exports, `help()`, or `inspect.signature()`.
+- R: package documentation and exports, `help()`, `args()`, `formals()`, or method listings.
+- Bash: `command -v`, `type`, command help, manuals, directory listings, or searches with tools such as `rg`.
+
+These are examples, NOT a required checklist. Select only checks relevant to the uncertainty at hand.
+Do NOT assume an object's existence or location in the expression used to inspect it.
+Use exact names, paths, and interface details from verified information. Do NOT reconstruct them from memory or naming conventions.
+
+If the findings contradict an assumption, you MUST revise that assumption before proceeding.
+Do NOT retry a failed name, path, parameter, or request format—or a guessed variation of it—without evidence supporting the change.
+
+Gather only the information needed for the current step.
+Once that information is sufficient, you MUST stop gathering and carry out the current step.
+Do NOT continue searching, rereading documentation, or exploring implementation details merely to understand everything in advance.
+
+# Carry out the task
+
+When the available information supports the current step, you MUST carry it out, whether that information was already available or obtained through additional inquiry.
+Apply relevant guidance to the actual data, environment, and constraints.
+When a small, low-risk test can resolve uncertainty about actual behavior, perform that test rather than continuing to speculate.
+
+You MUST update the plan when new evidence changes the appropriate approach.
+Do NOT continue following an approach whose required assumptions have been contradicted by observed results."""
 
 TASK_UNDERSTANDING_PROMPT = """
     # Guidance for understanding the user's request
@@ -147,98 +205,98 @@ Note:
   or make a decision that affects the direction or scope.
 """
 
-ANALYSIS_CODE_PROMPT = r"""
-    # Instructions for scientific analyses
+# ANALYSIS_CODE_PROMPT = r"""
+#     # Instructions for scientific analyses
     
-    Follow these instructions whenever performing a scientific analysis.
-    Consult relevant tutorials (including skills) before writing analysis code or choosing parameters.
+#     Follow these instructions whenever performing a scientific analysis.
+#     Consult relevant tutorials (including skills) before writing analysis code or choosing parameters.
 
-    This requirement applies to methods and choices that affect scientific
-    judgment. Mechanical operations, such as file I/O, directory operations, or
-    format conversions that preserve data meaning, do not require tutorial lookup
-    unless you are unsure how to perform them.
+#     This requirement applies to methods and choices that affect scientific
+#     judgment. Mechanical operations, such as file I/O, directory operations, or
+#     format conversions that preserve data meaning, do not require tutorial lookup
+#     unless you are unsure how to perform them.
 
-    If no suitable tutorial can be found, or the method requires original
-    development, you may proceed without a tutorial.
+#     If no suitable tutorial can be found, or the method requires original
+#     development, you may proceed without a tutorial.
 
-    For established analytical methods, follow this workflow:
+#     For established analytical methods, follow this workflow:
 
-    1. Find relevant tutorials using available skills or web search.
-        For online tutorials, use webFetch to save their content locally.
+#     1. Find relevant tutorials using available skills or web search.
+#         For online tutorials, use webFetch to save their content locally.
 
-    2. Use copyPaste to copy the required code into a code evidence file.
-        Note: 
-        - Copy only code; do not include any non-code text.
-        Preserve the source reference automatically generated by the tool.
+#     2. Use copyPaste to copy the required code into a code evidence file.
+#         Note: 
+#         - Copy only code; do not include any non-code text.
+#         Preserve the citation information automatically generated by the tool.
 
-    3. Adapt its parameters and necessary portions to the current project, data, 
-        and available resources. Then use executeCode tool to execute the code.
+#     3. Adapt its parameters and necessary portions to the current project, data, 
+#         and available resources. Then use executeCode tool to execute the code.
 
-        Implement and validate the analysis incrementally. Before running the
-        full workflow, execute the smallest meaningful part that can test the
-        current implementation. Inspect its actual outputs and resolve failures
-        before expanding to the full data or computation.
+#         Implement and validate the analysis incrementally. Before running the
+#         full workflow, execute the smallest meaningful part that can test the
+#         current implementation. Inspect its actual outputs and resolve failures
+#         before expanding to the full data or computation.
 
-        Note: 
-        - Parameter choices that affect scientific judgment must follow methods
-        or principles supported by relevant tutorials or literature, taking the
-        current situation into account.
-        - Do not directly modify the code evidence file.
-        - For every executeCode call used in a scientific analysis, provide exactly one
-            `markdown` parameter. This single Markdown string describes the code cell
-            that follows it.
-        - The single `markdown` string must contain:
-            1) A human-readable title and explanation of the purpose, context, inputs,
-               and important analytical choices of the current step.
-            2) When the command uses or adapts code from a code evidence file, the
-               complete corresponding Reference section, wrapped in a fenced `text`
-               code block.
-        - The explanation and the Reference are two sections of the same Markdown cell.
-            Do not treat them as separate Markdown cells, separate tool calls, or
-            alternative forms of Markdown content. Do not omit the Reference in order
-            to include the explanation.
-        - A Reference section begins with
-            `#--------------------Reference--------------------` and ends immediately
-            before `#--------------------Copied Content--------------------`.
-        - Include no more than one Reference section in a `markdown` parameter.
-        - Never include the `Copied Content` header or any copied code in `markdown`.
-            Put only executable adapted code in `command`.
-        - Preserve every included line of the Reference section unchanged.
-        - Retries and corrections of evidence-based code must include the same Reference
-            section again in their new `markdown` parameter.
+#         Note: 
+#         - Parameter choices that affect scientific judgment must follow methods
+#         or principles supported by relevant tutorials or literature, taking the
+#         current situation into account.
+#         - Do not directly modify the code evidence file.
+#         - For every executeCode call used in a scientific analysis, provide exactly one
+#             `markdown` parameter. This single Markdown string describes the code cell
+#             that follows it.
+#         - The single `markdown` string must contain:
+#             1) A human-readable title and explanation of the purpose, context, inputs,
+#                and important analytical choices of the current step.
+#             2) When the command uses or adapts code from a code evidence file, the
+#                complete corresponding Reference section, wrapped in a fenced `text`
+#                code block.
+#         - The explanation and the Reference are two sections of the same Markdown cell.
+#             Do not treat them as separate Markdown cells, separate tool calls, or
+#             alternative forms of Markdown content. Do not omit the Reference in order
+#             to include the explanation.
+#         - A Reference section begins with
+#             `#--------------------Reference--------------------` and ends immediately
+#             before `#--------------------Copied Content--------------------`.
+#         - Include no more than one Reference section in a `markdown` parameter.
+#         - Never include the `Copied Content` header or any copied code in `markdown`.
+#             Put only executable adapted code in `command`.
+#         - Preserve every included line of the Reference section unchanged.
+#         - Retries and corrections of evidence-based code must include the same Reference
+#             section again in their new `markdown` parameter.
 
-            Example:
+#             Example:
 
-            Suppose the evidence file contains:
+#             Suppose the evidence file contains:
 
-                #--------------------Reference--------------------
-                # Purpose: Core PyDESeq2 pipeline for differential expression analysis.
-                # URL: https://pydeseq2.readthedocs.io/en/latest/auto_examples/plot_minimal_pydeseq2_pipeline.html
-                # Local Evidence File:  /home/user1/project/BioPaster_webfetch_example.json
-                #--------------------Copied Content--------------------
-                inference = DefaultInference(n_cpus=8)
-                dds = DeseqDataSet(...)
+#                 #--------------------Reference--------------------
+#                 # Purpose: Core PyDESeq2 pipeline for differential expression analysis.
+#                 # URL: https://pydeseq2.readthedocs.io/en/latest/auto_examples/plot_minimal_pydeseq2_pipeline.html
+#                 # Local Evidence File:  /home/user1/project/BioPaster_webfetch_example.json
+#                 #--------------------Copied Content--------------------
+#                 inference = DefaultInference(n_cpus=8)
+#                 dds = DeseqDataSet(...)
 
-            The executeCode input MUST use one `markdown` string containing both the
-            step explanation and the Reference:
+#             The executeCode input MUST use one `markdown` string containing both the
+#             step explanation and the Reference:
 
-                {
-                "kernel": "python3",
-                "markdown": "## Step 1: Differential expression analysis.\n\n```text\n#--------------------Reference--------------------\n# Purpose: Core PyDESeq2 pipeline for differential expression analysis.\n# URL: https://pydeseq2.readthedocs.io/en/latest/auto_examples/plot_minimal_pydeseq2_pipeline.html\n# Local Evidence File: /home/user1/project/BioPaster_webfetch_example.json\n```",
-                "command": "inference = DefaultInference(n_cpus=2)\ndds = DeseqDataSet(...)"
-                }
+#                 {
+#                 "kernel": "python3",
+#                 "markdown": "## Step 1: Differential expression analysis.\n\n```text\n#--------------------Reference--------------------\n# Purpose: Core PyDESeq2 pipeline for differential expression analysis.\n# URL: https://pydeseq2.readthedocs.io/en/latest/auto_examples/plot_minimal_pydeseq2_pipeline.html\n# Local Evidence File: /home/user1/project/BioPaster_webfetch_example.json\n```",
+#                 "command": "inference = DefaultInference(n_cpus=2)\ndds = DeseqDataSet(...)"
+#                 }
 
-            In this example, the title, analytical explanation, and fenced Reference are
-            all part of one Markdown cell passed through the single `markdown` parameter.
+#             In this example, the title, analytical explanation, and fenced Reference are
+#             all part of one Markdown cell passed through the single `markdown` parameter.
 
-    4. If execution fails, revisit the preceding steps to adjust the working
-        code or find additional tutorials.
+#     4. If execution fails, revisit the preceding steps to adjust the working
+#         code or find additional tutorials.
 
-    5. Before declaring completion, verify that the actual result satisfies
-        the user's request. Base this judgment on observed evidence, not merely
-        on whether the steps ran successfully. After making corrections,
-        verify the result again.
-"""
+#     5. Before declaring completion, verify that the actual result satisfies
+#         the user's request. Base this judgment on observed evidence, not merely
+#         on whether the steps ran successfully. After making corrections,
+#         verify the result again.
+# """
 
 
 SCIENTIFIC_CLAIMS_PROMPT = """
@@ -251,14 +309,14 @@ SCIENTIFIC_CLAIMS_PROMPT = """
 
     When external literature is needed, follow this workflow:
 
-    1. Obtain the source text.
+    1. Obtain the original text.
         Search for relevant publications and use tools to save the material
         you need to examine locally.
 
     2. Create literature evidence files.
         Use copyPaste to copy the original passages supporting your statements
         into literature evidence files.
-        Preserve the copied passages and their source references.
+        Preserve the copied passages and their citation information.
         Do not directly modify these evidence files or replace copied passages
         with your own summaries.
 
@@ -275,7 +333,7 @@ SCIENTIFIC_CLAIMS_PROMPT = """
         and list the corresponding references at the end of the answer or report.
         Each citation number identifies a publication.
         Literature evidence files do not need citation numbers.
-        Preserve identifying source information, such as the DOI or title,
+        Preserve identifying bibliographic information, such as the DOI or title,
         so readers can use the reference list to locate the corresponding
         copied passages and assess whether they support the claim.
         Provide the paths to the literature evidence files.
@@ -296,7 +354,7 @@ LANGUAGE_PROMPT = """
 """
 
 CONTEXT_REMINDER_PROMPT ="""
-    Importent: Do not repeatedly speculate from memory about facts that available tools can verify.
+    Important: Do not repeatedly speculate from memory about facts that available tools can verify.
     Treat information recalled from memory as candidates for verification, 
     since it may be hallucinated rather than factual.
     
@@ -457,7 +515,7 @@ def assemble_system_prompt(context: ToolContext) -> str:
                 TASK_UNDERSTANDING_PROMPT,
                 TASK_EXECUTION_PROMPT,
                 TASK_MANAGEMENT_PROMPT,
-                ANALYSIS_CODE_PROMPT,
+                # ANALYSIS_CODE_PROMPT,
                 SCIENTIFIC_CLAIMS_PROMPT,
                 LANGUAGE_PROMPT,
                 CONTEXT_REMINDER_PROMPT,

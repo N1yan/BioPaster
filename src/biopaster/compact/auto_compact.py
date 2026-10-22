@@ -17,30 +17,109 @@ CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
 
 
 COMPACT_PROMPT = """
-Create a detailed summary of the conversation so far.
+Create a detailed summary of the conversation so far, paying close attention
+to the user's explicit requests and your previous actions. Preserve the
+scientific context, data, methods, findings, evidence, and implementation
+details needed to continue the work without access to the original messages.
+Adapt the level of detail to the actual task, whether it involves literature
+research, data analysis, writing, or software implementation.
 
-Preserve:
+Before providing the summary, organize your review in <analysis> tags:
+1. Review the conversation chronologically. Identify the user's explicit
+   requests, your approach, scientific and technical decisions, data used,
+   methods, findings, supporting evidence, artifacts, errors, and fixes.
+   Include file names, code snippets, function signatures, and file edits
+   when they are needed to continue the work.
+   Pay special attention to user feedback, especially requests to change
+   your approach.
+2. Double-check scientific and technical accuracy and completeness against
+   the conversation. Preserve the recorded meaning of parameters, criteria,
+   numerical results, and terminology. Do not add new explanations or
+   silently correct the record using memory. Distinguish requested or
+   planned work from executed work, observed results from interpretations,
+   and established findings from hypotheses or unresolved uncertainties.
 
-1. The user's requests and intent.
-2. Important technical decisions.
-3. Files, functions and code involved.
-4. Errors encountered and their fixes.
-5. Work already completed.
-6. Pending work.
-7. Current work and next step.
-8. Important user corrections and preferences.
-9. Input data paths and output paths.
-10. Any other information that is important to continue the work.
-11. Preserve only skills needed for the current or remaining work:
-their exact names, SKILL.md paths, relevant arguments, and essential
-requirements or restrictions. Omit skills used solely for completed
-work unless they remain necessary. If detailed instructions are
-needed, note that the skill must be reloaded before proceeding.
+Automatically injected reminders may appear as user messages. Do not retain
+or quote these reminders in the summary or list them as user requests.
+Preserve actual user requests, corrections, and preferences.
 
-Respond in this format:
+Include the following sections in <summary>:
 
+1. Primary Request and Intent
+   Capture all of the user's explicit requests and intents in detail.
+2. Scientific Context, Data, and Methods
+   Preserve the research question and relevant biological or medical context.
+   For data analysis, retain dataset identities, sample groups, comparisons,
+   preprocessing, methods, parameters, selection criteria, and units as
+   established in the conversation. Include data dimensions, field meanings,
+   software versions, and technical decisions when needed to resume correctly.
+3. Findings, Evidence, and Artifacts
+   Preserve actual results, their associated methods and inputs, and relevant
+   limitations or uncertainties. Retain the references, identifiers, links,
+   and supporting passages needed to trace literature-based claims to the
+   materials consulted. Do not present a planned analysis as a result or an
+   unverified interpretation as an established finding.
+   Enumerate relevant data files, reports, figures, notebooks, and code that
+   were examined, modified, or created, explaining their role and status.
+   Preserve exact input data paths and output paths. Include full code
+   snippets and function signatures where needed to continue the work.
+4. Errors and Fixes
+   List errors encountered, how they were fixed, and relevant user feedback.
+   Clearly identify errors that remain unresolved.
+5. Problem Solving
+   Describe solved problems and ongoing troubleshooting efforts.
+6. User Messages
+   List all actual user messages that are not tool results or automatically
+   injected reminders, preserving feedback and changes in intent.
+7. Pending Tasks
+   List pending tasks the user explicitly requested.
+8. Current Work
+   Describe precisely what was being worked on immediately before this
+   summary request. Pay particular attention to recent messages and include
+   the relevant data, references, artifacts, and code where applicable.
+9. Optional Next Step
+   Identify the next step only when it directly follows the user's most
+   recent explicit requests and the work underway before this summary.
+   Do not revive completed or unrelated tasks. If there is a next step,
+   quote the relevant recent conversation verbatim to establish the task
+   and where work stopped. Do not quote automatically injected reminders.
+10. Relevant Skills
+    Preserve only skills needed for current or remaining work: exact names,
+    SKILL.md paths, relevant arguments, and essential requirements or
+    restrictions. Omit skills used solely for completed work unless still
+    needed. Note when a skill must be reloaded for detailed instructions.
+
+Preserve any other information essential to continuing the actual task.
+Do not invent information to fill sections that do not apply.
+
+Follow any additional summarization instructions provided in the conversation,
+while excluding automatically injected reminders from the resulting summary.
+
+Use this structure:
+<analysis>
+Review the conversation and check coverage and accuracy.
+</analysis>
 <summary>
-Detailed summary here.
+1. Primary Request and Intent
+...
+2. Scientific Context, Data, and Methods
+...
+3. Findings, Evidence, and Artifacts
+...
+4. Errors and Fixes
+...
+5. Problem Solving
+...
+6. User Messages
+...
+7. Pending Tasks
+...
+8. Current Work
+...
+9. Optional Next Step
+...
+10. Relevant Skills
+...
 </summary>
 """
 

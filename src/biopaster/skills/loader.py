@@ -29,7 +29,7 @@ def parse_skill_document(text: str) -> tuple[dict[str, Any], str]:
     raise ValueError("Skill frontmatter is missing its closing '---'.")
 
 def validate_skill_metadata(metadata: dict[str, Any]) -> None:
-    """Validate the skill options supported by BioPaster."""
+    """Validate skill options; accept allowed-tools without granting permissions."""
     description = metadata.get("description")
     if not isinstance(description, str) or not description.strip():
         raise ValueError("description must be a non-empty string.")
@@ -41,7 +41,6 @@ def validate_skill_metadata(metadata: dict[str, Any]) -> None:
         )
 
     unsupported_fields = {
-        "allowed-tools",
         "model",
         "context",
         "agent",
