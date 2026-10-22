@@ -519,6 +519,7 @@ class OpenAIProvider:
         on_text_chunk: Callable[[str], None] | None = None,
         max_retries: int | None = None,
         timeout: float | None = None,
+        total_timeout: float | None = None,
     ) -> ChatResponse:
         """Send one streaming request and close its resources on exit."""
         client_class = self._get_client_class()
@@ -534,12 +535,14 @@ class OpenAIProvider:
         if timeout is not None:
             client_options["timeout"] = timeout
 
-        async with client_class(**client_options) as client:
-            return await self._stream_response(
-                client,
-                request,
-                on_text_chunk=on_text_chunk,
-            )
+        # Unlike the SDK's per-read timeout, this also bounds an active stream.
+        async with asyncio.timeout(total_timeout):
+            async with client_class(**client_options) as client:
+                return await self._stream_response(
+                    client,
+                    request,
+                    on_text_chunk=on_text_chunk,
+                )
               
     def chat_stream_response(
         self,
@@ -553,6 +556,7 @@ class OpenAIProvider:
         max_tokens: int | None = None,
         thinking: dict[str, Any] | None = None,
         timeout: float | None = None,
+        total_timeout: float | None = None,
     ) -> ChatResponse:
         """Provide the synchronous interface used by the agent."""
         self.validate_configuration()
@@ -592,6 +596,7 @@ class OpenAIProvider:
                     on_text_chunk=on_text_chunk,
                     max_retries=max_retries,
                     timeout=timeout,
+                    total_timeout=total_timeout,
                 )
             )
 

@@ -321,11 +321,7 @@ LANGUAGE_PROMPT = """
 CONTEXT_REMINDER_PROMPT = """
 # Context Management
 
-Important: Do not repeatedly speculate from memory about facts that available tools can verify.
-    Treat information recalled from memory as candidates for verification, 
-    since it may be hallucinated rather than factual.
-    
-    When working with tool results, write down any important information you might need later in your response,
+Important: When working with tool results, write down any important information you might need later in your response,
     as the original tool result may becleared later. When the context window is nearly full, older messages will be
     automatically summarized so you can continue working.
 """

@@ -203,6 +203,8 @@ def _generate_compact_summary(
         max_tokens=max_tokens,
         on_text_chunk=None,
         max_retries=0,
+        timeout=480.0,
+        total_timeout=480.0,
     )
     
     if response.tool_uses:

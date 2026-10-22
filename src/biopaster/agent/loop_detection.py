@@ -147,6 +147,41 @@ def _text_output(value):
     return str(value)
 
 
+def _parse_judgment(response, available, exact_repeat):
+    """Validate a checker response before changing any detector state."""
+    if response.finish_reason == "max_tokens":
+        raise ValueError("The judgment was truncated; return a shorter, complete JSON object")
+    if response.tool_uses:
+        raise ValueError("Tool calls are not allowed; return only the judgment JSON")
+    if not isinstance(response.content, str) or not response.content.strip():
+        raise ValueError("The judgment is empty; return a JSON object")
+    try:
+        decision = json.loads(response.content)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
+    if not isinstance(decision, dict):
+        raise ValueError("The judgment must be a JSON object")
+    if type(decision.get("is_stuck")) is not bool:
+        raise ValueError("is_stuck must be a boolean")
+    if not isinstance(decision.get("reason"), str) or not decision["reason"].strip():
+        raise ValueError("reason must be a non-empty string")
+    if type(decision.get("same_as_previous")) is not bool:
+        raise ValueError("same_as_previous must be a boolean")
+    if exact_repeat or decision["is_stuck"]:
+        turns = decision.get("turns")
+        if not isinstance(turns, list) or any(type(t) is not int for t in turns):
+            raise ValueError("turns must be a list of integer turn IDs")
+        unavailable = sorted(set(turns) - available)
+        if unavailable:
+            raise ValueError(f"turns contains unavailable IDs: {unavailable}")
+        minimum = 1 if exact_repeat else 2
+        if len(set(turns)) < minimum:
+            raise ValueError(f"turns must cite at least {minimum} distinct available turn IDs")
+    return decision
+
+
 @dataclass
 class LoopDetector:
     status: str = "idle"
@@ -226,32 +261,53 @@ class LoopDetector:
                 "calls": [{k: v for k, v in call.items() if k != "signature"}
                           for call in turn["calls"]],
             }), 2400)} for turn in window]
-            response = provider.chat_stream_response(
-                [{"role": "user", "content": _canonical({
-                    "previous_loop": self.previous_loop,
-                    "recent_attempts": transcript,
-                    "exact_repeat": exact_repeat,
-                })}],
-                system=CHECK_PROMPT, tools=None, max_tokens=1024,
-                thinking={"type": "disabled"}, timeout=30.0, max_retries=0,
-            )
-            usage = response.usage or {}
-            if response.finish_reason == "max_tokens" or response.tool_uses:
-                raise ValueError("Incomplete or tool-calling loop judgment")
-            decision = json.loads(response.content)
-            if not isinstance(decision, dict) or type(decision.get("is_stuck")) is not bool:
-                raise ValueError("Loop judgment requires a boolean is_stuck")
-            if not isinstance(decision.get("reason"), str) or not decision["reason"].strip():
-                raise ValueError("Loop judgment requires a reason")
-            if type(decision.get("same_as_previous")) is not bool:
-                raise ValueError("Loop judgment requires a boolean same_as_previous")
+            available = {turn["turn"] for turn in window}
+            messages = [{"role": "user", "content": _canonical({
+                "previous_loop": self.previous_loop,
+                "recent_attempts": transcript,
+                "exact_repeat": exact_repeat,
+            })}]
+            for attempt in range(2):
+                response = provider.chat_stream_response(
+                    messages,
+                    system=CHECK_PROMPT, tools=None, max_tokens=1024,
+                    thinking={"type": "disabled"}, timeout=300.0,
+                    total_timeout=300.0, max_retries=0,
+                )
+                for key, value in (response.usage or {}).items():
+                    if isinstance(value, (int, float)):
+                        usage[key] = usage.get(key, 0) + value
+                try:
+                    decision = _parse_judgment(response, available, exact_repeat)
+                    break
+                except ValueError as exc:
+                    if log is not None:
+                        log.record("loop_check_validation_failed", {
+                            "attempt": attempt + 1,
+                            "response": response.content,
+                            "tool_uses": response.tool_uses,
+                            "error": str(exc),
+                            "available_turns": sorted(available),
+                        })
+                    if attempt == 1:
+                        raise
+                    # Keep repair dialogue local to the independent checker.
+                    # Invalid tool calls are text, never executable tool blocks.
+                    rejected = response.content or ""
+                    if response.tool_uses:
+                        rejected += "\nTool calls: " + _canonical(response.tool_uses)
+                    messages = [*messages,
+                        {"role": "assistant", "content": rejected or "[empty response]"},
+                        {"role": "user", "content": (
+                            f"Your judgment failed validation: {exc}.\n"
+                            f"Available recent turn IDs: {sorted(available)}.\n"
+                            "Reassess the original evidence and return corrected JSON only, "
+                            "with reason, turns, is_stuck, and same_as_previous. "
+                            "Do not invent evidence or assume a loop just to satisfy validation."
+                        )},
+                    ]
             if exact_repeat or decision["is_stuck"]:
-                turns = decision.get("turns")
-                available = {turn["turn"] for turn in window}
-                if (not isinstance(turns, list) or any(type(t) is not int for t in turns)
-                        or len(set(turns)) < (1 if exact_repeat else 2)
-                        or not set(turns) <= available):
-                    raise ValueError("Loop judgment must cite distinct available turns")
+                turns = decision["turns"]
                 reason = f"Repeated approach in turns {turns}: {decision['reason']}"
 
                 self.consecutive_count = (

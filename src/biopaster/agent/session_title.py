@@ -24,7 +24,8 @@ def generate_session_title(provider, user_message: str, assistant_response: str)
         thinking={"type": "disabled"},
         max_tokens=2048,
         max_retries=0,
-        timeout=15.0,
+        timeout=300.0,
+        total_timeout=300.0,
         on_text_chunk=None,
     )
     if response.tool_uses or response.finish_reason == "max_tokens":

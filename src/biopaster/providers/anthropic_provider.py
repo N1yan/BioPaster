@@ -1,5 +1,6 @@
 from typing import Any, Optional, Callable
-from anthropic import Anthropic
+import asyncio
+from anthropic import Anthropic, AsyncAnthropic
 from .base import ChatResponse, prepare_messages
 from uuid import uuid4
 
@@ -114,12 +115,32 @@ class AnthropicProvider:
         else:
             request.pop("extra_body", None)
 
+    async def _send_timed_request(
+        self, request, *, total_timeout, max_retries, on_text_chunk, request_id,
+    ):
+        """Use cancellable I/O for requests with a whole-call deadline."""
+        options = {"api_key": self.api_key, "base_url": self.base_url}
+        if max_retries is not None:
+            options["max_retries"] = max_retries
+        async with asyncio.timeout(total_timeout):
+            async with AsyncAnthropic(**options) as client:
+                async with client.messages.stream(**request) as stream:
+                    async for event in stream:
+                        if self.session_log is not None:
+                            self.session_log.record("model_stream", {
+                                "request_id": request_id, "event": event,
+                            })
+                        if event.type == "text" and on_text_chunk is not None:
+                            on_text_chunk(event.text)
+                    return await stream.get_final_message()
+
     def chat_stream_response(
         self,
         messages: list,
         tools: Optional[list[dict[str, Any]]] = None,
         on_text_chunk: Callable[[str], None] | None = None,
         max_retries: int | None = None,
+        total_timeout: float | None = None,
         **kwargs,
     ) -> ChatResponse:
         request = {
@@ -148,25 +169,39 @@ class AnthropicProvider:
             )
 
         try:
-            client = self._ensure_client()
-            if max_retries is not None:
-                client = client.with_options(max_retries=max_retries)
+            if total_timeout is not None:
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    pass
+                else:
+                    raise RuntimeError(
+                        "chat_stream_response with total_timeout must run outside an active event loop"
+                    )
+                final_message = asyncio.run(self._send_timed_request(
+                    request, total_timeout=total_timeout, max_retries=max_retries,
+                    on_text_chunk=on_text_chunk, request_id=request_id,
+                ))
+            else:
+                client = self._ensure_client()
+                if max_retries is not None:
+                    client = client.with_options(max_retries=max_retries)
 
-            with client.messages.stream(**request) as stream:
-                for event in stream:
-                    if log is not None:
-                        log.record(
-                            "model_stream",
-                            {
-                                "request_id": request_id,
-                                "event": event,
-                            },
-                        )
+                with client.messages.stream(**request) as stream:
+                    for event in stream:
+                        if log is not None:
+                            log.record(
+                                "model_stream",
+                                {
+                                    "request_id": request_id,
+                                    "event": event,
+                                },
+                            )
 
-                    if event.type == "text" and on_text_chunk is not None:
-                        on_text_chunk(event.text)
+                        if event.type == "text" and on_text_chunk is not None:
+                            on_text_chunk(event.text)
 
-                final_message = stream.get_final_message()
+                    final_message = stream.get_final_message()
 
             if log is not None:
                 log.record(

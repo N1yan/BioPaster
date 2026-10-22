@@ -96,7 +96,8 @@ def review_permission(
         on_text_chunk=None,
         max_retries=0,
         max_tokens=4096,
-        timeout=30.0,
+        timeout=300.0,
+        total_timeout=300.0,
         thinking={"type": "disabled"},
     )
 
