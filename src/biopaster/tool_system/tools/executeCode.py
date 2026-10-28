@@ -27,7 +27,7 @@ def _run_notebook_cell(
     notebook =  nbformat.v4.new_notebook(cells=[cell])
     kernel_manager = AsyncKernelManager(
         kernel_name=kernel_name,
-        transport_encryption="required",
+        transport_encryption="disabled",
     )
     client = NotebookClient(
         notebook,

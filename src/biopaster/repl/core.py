@@ -710,14 +710,16 @@ class BioPasterStreamingREPL:
             console.print("BioPaster:", style="bold cyan")
             console.print(Markdown(turn.answer))
         if turn.status != "success":
-            label = {
-                "pending": "本轮未完成。",
-                "interrupted": "本轮已中断。",
-                "error": "本轮失败。",
-            }[turn.status]
-            console.print(Text(label, style="yellow"))
-            for error in turn.errors:
-                console.print(Text(error, style="red"))
+            if turn.errors:
+                for error in turn.errors:
+                    console.print(Text(error, style="red"))
+            else:
+                label = {
+                    "pending": "Turn incomplete.",
+                    "interrupted": "Turn interrupted.",
+                    "error": "Turn failed.",
+                }[turn.status]
+                console.print(Text(label, style="yellow"))
         console.print()
 
     def _render_resize_history(self, width: int) -> str:
@@ -908,10 +910,6 @@ class BioPasterStreamingREPL:
     def _review_permission(self, request, decisions):
         environment = {
             "workspace_root": str(self.tool_context.workspace_root),
-            "trusted_remote_repositories": [],
-            "trusted_internal_domains": [],
-            "trusted_cloud_buckets": [],
-            "key_internal_services": [],
         }
 
         system_prompt = (
@@ -1166,7 +1164,7 @@ class BioPasterStreamingREPL:
             self._autosave_session()
             try:
                 self.session_title = generate_session_title(
-                    self.provider, user_input, result.response_text
+                    self.provider, self.replay_history.turns[0].user
                 )
             except (Exception, KeyboardInterrupt, EOFError) as exc:
                 try:
