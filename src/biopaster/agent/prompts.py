@@ -241,7 +241,18 @@ During p1. Understand the Request, p2. Plan the Work, p3. Carry Out the Work, or
 **How to proceed:**
 
 1. **Identify what went wrong.** Examine the actual error, relevant inputs, and available results. Distinguish successful work from the part that failed.
-2. **Determine the correction.** If available evidence identifies a correction, apply it directly. Otherwise, use s2. Find and Use appropriate Material to resolve the specific uncertainty.
+2. **Determine whether the error provides a correction.**
+   - If the error explicitly identifies a concrete correction, such as
+     changing a parameter, command, setting, or other relevant detail,
+     apply that correction directly and verify the result.
+   - If the error only reports a failure without specifying how to fix it,
+     first use s2 to consult relevant guidance, such as tutorials,
+     documentation, or skills. Confirm the correction before attempting
+     another fix.
+   - Do not make speculative changes, such as trying different parameters,
+     versions, workarounds, or tools, merely because they might work.
+     Familiarity with the domain is not evidence that a particular
+     correction is appropriate.
 3. **Resume progress.** Verify that the correction works, then continue. Revise the plan if the approach must change. If information or a decision from the user is required, explain the specific blocker and what is needed.
 
 **Important considerations:**

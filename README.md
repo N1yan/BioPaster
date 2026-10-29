@@ -93,7 +93,7 @@ Install additional notebook kernels, such as R or Bash, and dependencies for ind
 
 ### 2. Download and start a local model
 
-Install `llama-server` following the [llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/tree/master/tools/server). Use a version supporting the Anthropic Messages API, streaming, and tool calls, and select a model with a matching chat template.
+Install `llama-server` following the [llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/tree/master/tools/server). Use a version supporting OpenAI-compatible Chat Completions, streaming, and tool calls, and select a model with a matching chat template.
 
 Download GGUF weights whose license permits free use from the model publisher. For example, download a specific file with the Hugging Face CLI:
 
@@ -136,7 +136,9 @@ For a first-time setup, use this complete configuration. If you already have a c
   "providers": {
     "local": {
       "api_key": "local",
-      "base_url": "http://127.0.0.1:8001",
+      "api_type": "openai",
+      "backend": "llama_cpp",
+      "base_url": "http://127.0.0.1:8001/v1",
       "models": [
         {
           "id": "biopaster-local",
@@ -154,7 +156,7 @@ For a first-time setup, use this complete configuration. If you already have a c
 
 The `local` value in `api_key` is a nonempty placeholder for the client when the local server has authentication disabled; it is not a paid API key. If you enable authentication on your server, supply its configured key instead.
 
-Both `default_model` and the model `id` must match `llama-server --alias`. Match `context_window` to the server's available context, with `max_output_tokens` smaller than that value. Use the server root for `base_url`; the client appends the Messages API path.
+Both `default_model` and the model `id` must match `llama-server --alias`. Match `context_window` to the server's available context, with `max_output_tokens` smaller than that value. Set `api_type` to `openai` and `backend` to `llama_cpp` to select BioPaster's dedicated llama.cpp provider. Include `/v1` in `base_url`; the client sends requests to `/v1/chat/completions`. The connection name `local` is only a label in this configuration.
 
 If you keep multiple providers, every connection must have valid, complete settings. Remove the unused initial connection with an empty key, or configuration validation will still fail.
 

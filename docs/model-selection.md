@@ -14,7 +14,9 @@ This configuration connects to a local server listening on `127.0.0.1:8001` with
   "providers": {
     "local": {
       "api_key": "local",
-      "base_url": "http://127.0.0.1:8001",
+      "api_type": "openai",
+      "backend": "llama_cpp",
+      "base_url": "http://127.0.0.1:8001/v1",
       "models": [
         {
           "id": "biopaster-local",
@@ -34,13 +36,17 @@ This is a minimal model connection configuration. When editing an existing file,
 | `default_model` | Must match a configured model's `id` |
 | `providers` | At least one connection; names such as `local` are yours to choose |
 | `api_key` | A nonempty string; use `local` for an unauthenticated local server, or its actual key when authentication is enabled |
-| `base_url` | The model server's base address; use the server root for llama.cpp |
+| `api_type` | `anthropic` (default) or `openai`; use `openai` for the dedicated llama.cpp provider |
+| `backend` | Set to `llama_cpp` for llama.cpp; requires `api_type: "openai"`. Omit for generic API connections |
+| `base_url` | API base address; the dedicated llama.cpp provider uses `http://127.0.0.1:8001/v1` |
 | `models` | At least one selectable model for this connection |
 | `id` | A model name or alias accepted by the server; must be unique within the connection |
 | `context_window` | A positive integer greater than `max_output_tokens`, matching the server's available context |
 | `max_output_tokens` | A positive integer limiting the tokens generated in one response |
 
-The current provider uses the Anthropic SDK. Servers must support the Messages API, streaming, and tool calls. Model connection fields are read literally; `${VARIABLE}` values are not expanded from environment variables.
+`api_type: "anthropic"` uses the Messages API; `api_type: "openai"` uses Chat Completions. Adding `backend: "llama_cpp"` selects the dedicated llama.cpp provider. Servers must support the selected API, streaming, and tool calls. Model connection fields are read literally; `${VARIABLE}` values are not expanded from environment variables.
+
+Older configurations that omit `api_type` still select the Anthropic provider. To migrate a local connection, add both fields shown above and change its base URL from the server root to `/v1`. Do not change unrelated cloud connections.
 
 Model entries can override token budgets set at provider level. Missing values fall back to the provider's values, then to built-in defaults: `context_window=128000` and `max_output_tokens=32000`. For local small models, set explicit budgets as shown above to avoid exceeding available resources.
 
@@ -84,11 +90,9 @@ For an Anthropic-compatible endpoint supporting `output_config.effort`, add an o
 
 Accepted `reasoning_effort` values are `low`, `medium`, `high`, `xhigh`, and `max`; actual support and aliases depend on the endpoint. The current Alibaba Cloud Qwen3.8-27B endpoint was verified to accept `low`, `medium`, and `xhigh`. Omit the field or use `null` to keep server defaults. Do not configure it for endpoints that do not support this parameter.
 
-The provider named `local` uses the llama.cpp Messages adapter. Model-level `reasoning_effort` is sent as `chat_template_kwargs.reasoning_effort`: use `medium` or `xhigh` for Bonsai 2 27B. The older Qwopus 9B template does not read this setting, so omit it for that model. The switch uses `chat_template_kwargs.enable_thinking` alongside the existing -1/0 budget compatibility mapping. Enabled thinking has no separate budget cap but remains subject to total output and context limits. Other providers use `output_config.effort`. Disabled thinking omits effort. Keep the server default `--reasoning-budget -1`.
+For `api_type: "openai"` with `backend: "llama_cpp"`, thinking settings are sent through `chat_template_kwargs.enable_thinking` and `chat_template_kwargs.reasoning_effort`. Support depends on the model's template; do not assume every template supports every setting. The dedicated provider does not use the legacy Messages adapter's -1/0 budget conversion. Keep the server default `--reasoning-budget -1` when using template-based thinking control.
 
-Local requests also send `chat_template_kwargs.enable_thinking`. Bonsai 2 testing showed that budget 0 alone did not disable reasoning, while the native template flag did. Effective switching requires template support: the existing Qwopus 9B template ignores this flag, so disabling it is not guaranteed. Budget mapping is retained only for compatibility. The example includes both local and Qwen API connections; remove unused providers and fill in credentials and endpoint addresses for retained connections.
-
-BioPaster sends the value as `output_config.effort` through `extra_body` and logs the request. Explicit per-call effort takes precedence. Auxiliary calls that disable thinking or specify a thinking budget do not inherit this default. Effort does not change the output limit or guarantee a particular reasoning length.
+Generic OpenAI connections use `reasoning_effort`; Anthropic connections use `thinking` and `output_config.effort`. The legacy Anthropic connection named `local` retains its previous llama.cpp compatibility handling. New local configurations should use the explicit API/backend fields above. Effort does not change the output limit or guarantee a particular reasoning length.
 
 Restart or reselect the model with `/model` after editing. `/new` and `/resume` keep the currently loaded provider settings rather than restoring effort from a historical session.
 

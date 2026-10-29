@@ -2,12 +2,12 @@
 
 [English](local-model.md) | 中文
 
-本教程通过 llama.cpp 的 Anthropic 兼容 Messages API，将 BioPaster 连接到本地模型。服务支持 `/v1/messages` 时，无需协议转换代理。
+本教程通过 BioPaster 的专用 llama.cpp 连接，使用服务端的 OpenAI 兼容 `/v1/chat/completions` 接口调用本地模型，无需协议转换代理。
 
 ## 前置条件
 
 - 已在 Python 3.12 或更高版本环境中安装 BioPaster 及运行依赖。
-- `llama-server` 支持 `/v1/messages`、流式输出和工具调用。
+- `llama-server` 支持 `/v1/chat/completions`、流式输出和工具调用。
 - 使用支持工具调用的模型，并配置与其匹配的聊天模板。
 - 内存或显存足以运行模型及所配置的上下文。
 
@@ -74,7 +74,9 @@ curl http://127.0.0.1:8001/health
   "providers": {
     "local": {
       "api_key": "local",
-      "base_url": "http://127.0.0.1:8001",
+      "api_type": "openai",
+      "backend": "llama_cpp",
+      "base_url": "http://127.0.0.1:8001/v1",
       "models": [
         {
           "id": "biopaster-local",
@@ -89,7 +91,7 @@ curl http://127.0.0.1:8001/health
 
 模型名称应与服务 alias 一致，上下文预算应与单次请求可用的上下文一致；调整并行槽位后，应核对服务启动日志。使用 `/model` 选择其他已配置的模型或连接，仅影响当前会话。同一 provider 下配置多个模型的方法见[模型配置说明](model-selection.zh-CN.md)。
 
-`api_key: "local"` 是供客户端使用的非空占位值，适用于未开启鉴权的本地服务，无需购买密钥。如果服务开启了鉴权，填写实际配置的密钥。`base_url` 使用服务根地址，由客户端追加 Messages API 路径。
+`api_key: "local"` 是供客户端使用的非空占位值，适用于未开启鉴权的本地服务，无需购买密钥。如果服务开启了鉴权，填写实际配置的密钥。设置 `api_type: "openai"`、`backend: "llama_cpp"`，并在 `base_url` 中包含 `/v1`；这会选择 `LlamaCppProvider`，不依赖连接名称。
 
 会话标题通过同一个 provider 发起独立请求，关闭 thinking，并设置 2048 token 输出上限。服务是否支持这些选项取决于版本和模型模板。
 
@@ -116,7 +118,7 @@ BioPaster 应调用 TaskList 并显示结果。任务列表为空也属于正常
 | 现象 | 检查内容 |
 |---|---|
 | 连接被拒绝 | 服务进程、端口及 `/health` 响应。 |
-| `/v1/messages` 返回 404 | 当前运行的二进制是否支持该接口；只支持 OpenAI API 不代表支持 Anthropic。 |
+| Chat Completions 返回 404 | 检查 `api_type: "openai"`、`backend: "llama_cpp"`，以及 `base_url` 是否以 `/v1` 结尾；确认服务支持 `/v1/chat/completions`。 |
 | 模型加载失败 | 模型路径、可用内存、GPU 驱动和服务报错；适当调整卸载层数或上下文。 |
 | 超过上下文限制 | 实际单次请求上下文与 BioPaster 的输入、输出预算。 |
 | 不调用工具或重复调用 | `--jinja`、模型模板及指令遵循能力。 |

@@ -91,7 +91,7 @@ R、Bash 等额外 Notebook kernels，以及各示例的数据分析依赖，按
 
 ### 2. 下载并启动本地模型
 
-按照 [llama.cpp 服务文档](https://github.com/ggml-org/llama.cpp/tree/master/tools/server) 安装 `llama-server`。使用支持 Anthropic Messages API、流式响应和工具调用的版本，并选择带有匹配聊天模板的模型。
+按照 [llama.cpp 服务文档](https://github.com/ggml-org/llama.cpp/tree/master/tools/server) 安装 `llama-server`。使用支持 OpenAI 兼容 Chat Completions、流式响应和工具调用的版本，并选择带有匹配聊天模板的模型。
 
 从模型发布方下载许可允许免费运行的 GGUF 权重。例如，使用 Hugging Face CLI 下载指定文件：
 
@@ -134,7 +134,9 @@ biopaster
   "providers": {
     "local": {
       "api_key": "local",
-      "base_url": "http://127.0.0.1:8001",
+      "api_type": "openai",
+      "backend": "llama_cpp",
+      "base_url": "http://127.0.0.1:8001/v1",
       "models": [
         {
           "id": "biopaster-local",
@@ -152,7 +154,7 @@ biopaster
 
 `api_key` 中的 `local` 是供客户端使用的非空占位值，适用于未开启鉴权的本地服务，不是付费 API key。如果你为本地服务启用了鉴权，应填写对应密钥。
 
-`default_model` 和模型 `id` 要与 `llama-server --alias` 一致；`context_window` 要与服务可用上下文匹配，`max_output_tokens` 必须小于该值。`base_url` 使用服务根地址，由客户端追加 Messages API 路径。
+`default_model` 和模型 `id` 要与 `llama-server --alias` 一致；`context_window` 要与服务可用上下文匹配，`max_output_tokens` 必须小于该值。设置 `api_type: "openai"` 和 `backend: "llama_cpp"`，选择 BioPaster 的专用 llama.cpp 连接。`base_url` 需要包含 `/v1`，请求发送到 `/v1/chat/completions`。这里的连接名称 `local` 只是标签。
 
 如果保留多个 provider，每个连接都需要完整有效的配置。请移除不使用的初始空密钥连接，否则仍会触发配置校验错误。
 

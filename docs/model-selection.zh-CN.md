@@ -14,7 +14,9 @@ BioPaster 从 `~/.biopaster/config.json` 读取模型连接，通过全局 `defa
   "providers": {
     "local": {
       "api_key": "local",
-      "base_url": "http://127.0.0.1:8001",
+      "api_type": "openai",
+      "backend": "llama_cpp",
+      "base_url": "http://127.0.0.1:8001/v1",
       "models": [
         {
           "id": "biopaster-local",
@@ -34,13 +36,17 @@ BioPaster 从 `~/.biopaster/config.json` 读取模型连接，通过全局 `defa
 | `default_model` | 必须匹配已配置模型的 `id` |
 | `providers` | 至少包含一个连接；`local` 等名称由你指定 |
 | `api_key` | 非空字符串；无鉴权的本地服务可填 `local`，有鉴权时填写实际密钥 |
-| `base_url` | 模型服务的基础地址；llama.cpp 使用服务根地址 |
+| `api_type` | `anthropic`（默认）或 `openai`；专用 llama.cpp 连接使用 `openai` |
+| `backend` | llama.cpp 填 `llama_cpp`，必须配合 `api_type: "openai"`；通用 API 连接不填 |
+| `base_url` | API 基础地址；专用 llama.cpp 连接使用 `http://127.0.0.1:8001/v1` |
 | `models` | 该连接下可选择的模型，至少一项 |
 | `id` | 服务实际接受的模型名或 alias；同一连接内不能重复 |
 | `context_window` | 正整数，必须大于 `max_output_tokens`，应匹配服务实际可用上下文 |
 | `max_output_tokens` | 正整数，限制单次生成的输出 token 数 |
 
-当前 provider 使用 Anthropic SDK，服务需要支持 Messages API、流式响应与工具调用。配置值直接读取，不会对模型连接字段中的 `${变量名}` 自动展开环境变量。
+`api_type: "anthropic"` 使用 Messages API，`api_type: "openai"` 使用 Chat Completions；再设置 `backend: "llama_cpp"` 则选择专用 llama.cpp 连接。服务需要支持所选接口、流式响应与工具调用。配置值直接读取，不会对模型连接字段中的 `${变量名}` 自动展开环境变量。
+
+旧配置省略 `api_type` 时仍选择 Anthropic 连接。迁移本地连接时，补上示例中的两个字段，并将基础地址从服务根地址改为包含 `/v1` 的地址；不要修改无关的云端连接。
 
 模型条目可以覆盖 provider 级别的 token 预算；未设置时依次使用 provider 的值及内置默认值：`context_window=128000`、`max_output_tokens=32000`。对于小参数本地模型，建议像示例一样显式填写，避免默认预算超出实际资源。
 
@@ -84,11 +90,9 @@ BioPaster 从 `~/.biopaster/config.json` 读取模型连接，通过全局 `defa
 
 `reasoning_effort` 可填写 `low`、`medium`、`high`、`xhigh` 或 `max`；具体档位的支持和映射以服务端为准。Qwen3.8-27B 的当前阿里云接口已验证接受 `low`、`medium`、`xhigh`。不填写或设为 `null` 时不发送强度参数，沿用服务端默认值。不要给不支持该参数的接口添加此配置。
 
-当前名为 `local` 的 provider 按 llama.cpp Messages 接口适配。`reasoning_effort` 通过 `chat_template_kwargs.reasoning_effort` 传入模型模板；Bonsai 2 27B 使用 `medium` 或 `xhigh`，旧 Qwopus 9B 模板不读取该字段，不应为它配置等级。开关通过 `chat_template_kwargs.enable_thinking` 传递，同时保留思考预算的 -1/0 兼容转换。开启时不额外限制思考，仍受总输出和上下文限制。其他 provider 使用 `output_config.effort`；关闭思考时不发送等级。服务端应保留默认 `--reasoning-budget -1`。
+使用 `api_type: "openai"` 和 `backend: "llama_cpp"` 时，思考设置通过 `chat_template_kwargs.enable_thinking` 和 `chat_template_kwargs.reasoning_effort` 传入模型模板。实际支持范围取决于模板，不应假设所有模型都支持这些设置。专用连接不使用旧 Messages 适配器的 -1/0 思考预算转换。使用模板开关控制思考时，服务端保留默认 `--reasoning-budget -1`。
 
-本地请求还会同步传入 `chat_template_kwargs.enable_thinking`。Bonsai 2 的实测显示预算 0 本身未关闭思考，而模板开关 false 能关闭，因此实际开关以模板支持为前提。旧 Qwopus 9B 的内置模板不读取该开关，不能保证关闭。预算参数仅保留为兼容处理。示例配置同时展示 local 与 Qwen API；复制时删除不用的 provider，并填写保留连接的密钥和真实地址。
-
-BioPaster 将其通过 `extra_body` 传为 `output_config.effort`，实际请求参数会记录在原生会话日志中。辅助请求明确关闭思考或指定思考预算时，不叠加强度默认值；调用方显式指定的 effort 优先。它不改变 `max_output_tokens`，也不保证实际思考长度。
+通用 OpenAI 连接使用 `reasoning_effort`，Anthropic 连接使用 `thinking` 和 `output_config.effort`。旧版名为 `local` 的 Anthropic 连接保留原有 llama.cpp 兼容处理；新的本地配置应使用上述明确的 API/backend 字段。思考强度不改变输出上限，也不保证实际思考长度。
 
 保存后重新启动，或通过 `/model` 重新选择该模型以加载新配置。`/new`、`/resume` 沿用当前已加载的模型设置，不从历史会话恢复强度。
 

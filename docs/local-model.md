@@ -2,12 +2,12 @@
 
 English | [中文](local-model.zh-CN.md)
 
-Connect BioPaster to a local model using llama.cpp's Anthropic-compatible Messages API. No protocol-conversion proxy is needed when the server supports `/v1/messages`.
+Connect BioPaster to a local model using its dedicated llama.cpp provider and the server's OpenAI-compatible `/v1/chat/completions` endpoint. No protocol-conversion proxy is needed.
 
 ## Requirements
 
 - BioPaster installed in a Python 3.12+ environment with its runtime dependencies.
-- A `llama-server` build supporting `/v1/messages`, streaming, and tool calls.
+- A `llama-server` build supporting `/v1/chat/completions`, streaming, and tool calls.
 - A model that supports tool calling, with a matching chat template.
 - Sufficient memory for the model and configured context.
 
@@ -74,7 +74,9 @@ Replace the initial cloud connection with the local connection below and set the
   "providers": {
     "local": {
       "api_key": "local",
-      "base_url": "http://127.0.0.1:8001",
+      "api_type": "openai",
+      "backend": "llama_cpp",
+      "base_url": "http://127.0.0.1:8001/v1",
       "models": [
         {
           "id": "biopaster-local",
@@ -89,7 +91,7 @@ Replace the initial cloud connection with the local connection below and set the
 
 Match the model name to the server alias and its context budget to the available context for a single request. Verify the startup log if changing parallel-slot settings. Use `/model` to select another configured model or connection; the selection applies to the current session. See [model configuration](model-selection.md) for multiple models under one provider.
 
-`api_key: "local"` is a nonempty client placeholder for a local server without authentication. It does not require a paid key. If server authentication is enabled, use its configured key. Keep `base_url` at the server root; the client appends the Messages API path.
+`api_key: "local"` is a nonempty client placeholder for a local server without authentication. It does not require a paid key. If server authentication is enabled, use its configured key. Set `api_type: "openai"` and `backend: "llama_cpp"`; include `/v1` in `base_url`. This selects `LlamaCppProvider` regardless of the connection's name.
 
 Title generation uses the same provider through a separate request, with thinking disabled and a 2048-token output limit. Server support for these options depends on its version and model template.
 
@@ -116,7 +118,7 @@ BioPaster should call TaskList and display the result. An empty task list is a v
 | Symptom | Check |
 |---|---|
 | Connection refused | Server process, port, and `/health`. |
-| `/v1/messages` returns 404 | Support in the running binary. OpenAI compatibility alone does not establish Anthropic support. |
+| Chat Completions returns 404 | Use `api_type: "openai"`, `backend: "llama_cpp"`, and a `base_url` ending in `/v1`; verify the server supports `/v1/chat/completions`. |
 | Model fails to load | Model path, available memory, GPU driver, and server errors. Adjust offloading or context. |
 | Context-limit errors | Actual per-request context and BioPaster input/output budgets. |
 | Missing or repeated tool calls | `--jinja`, model template, and instruction following. |
