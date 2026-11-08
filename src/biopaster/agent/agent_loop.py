@@ -3,11 +3,11 @@ import json
 from typing import Any, Callable
 from ..providers.base import ChatResponse
 from dataclasses import dataclass, field
+from threading import Event
 from ..tool_system.registry import ToolRegistry
 from .conversation import Conversation, TextContentBlock, ToolUseContentBlock
 from ..tool_system.context import ToolContext
-from .prompts import assemble_system_prompt, TUTORIAL_REMINDER
-from .task_context import format_task_context
+from .prompts import assemble_system_prompt
 from ..tool_system.protocol import ToolResult, ToolCall
 from ..tool_system.persist import Persist
 from ..tool_system.map_result import map_tool_result
@@ -147,6 +147,40 @@ def agent_loop(
     on_text_chunk: Callable | None = None,
     on_event: Callable | None = None,
     on_checkpoint: Callable[[], None] | None = None,
+    cancel_event: Event | None = None,
+):
+    """Keep cancellation out of the ordinary tool-failure/retry path."""
+    # The UI supplies its turn token. Direct callers get a fresh token on each
+    # invocation, even when they reuse the same conversation and ToolContext.
+    tool_context.cancel_event = cancel_event if cancel_event is not None else Event()
+    try:
+        tool_context.raise_if_cancelled()
+        return _agent_loop(
+            conversation, provider, tool_registry, tool_context, max_turns,
+            stream, on_text_chunk, on_event, on_checkpoint,
+        )
+    except BaseException as exc:
+        if not isinstance(exc, (KeyboardInterrupt, EOFError)) and not tool_context.cancel_event.is_set():
+            raise
+        tool_context.cancel_event.set()
+        conversation.repair_pending_tool_results()
+        if on_checkpoint is not None:
+            on_checkpoint()
+        if isinstance(exc, (KeyboardInterrupt, EOFError)):
+            raise
+        raise KeyboardInterrupt() from exc
+
+
+def _agent_loop(
+    conversation: Conversation,
+    provider,
+    tool_registry: ToolRegistry,
+    tool_context: ToolContext,
+    max_turns: int = 500,
+    stream: bool = True,
+    on_text_chunk: Callable | None = None,
+    on_event: Callable | None = None,
+    on_checkpoint: Callable[[], None] | None = None,
     )-> AgentLoopResult:
     """Run agent loop: LLM -> tools -> LLM until no more tools or max turns.
     Returns:
@@ -157,6 +191,7 @@ def agent_loop(
     detector.begin_task()
 
     def finish_run(**kwargs):
+        tool_context.raise_if_cancelled()
         detector.status = kwargs.get("subtype", "success")
         if kwargs.get("errors"):
             detector.diagnostic = "\n".join(kwargs["errors"])
@@ -186,6 +221,7 @@ def agent_loop(
     total_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
     turn_count = 0
     for turn in range(max_turns):
+        tool_context.raise_if_cancelled()
         call_kwargs: dict[str, Any] = {
             "tools": tool_schemas,
             "system": system_prompt,
@@ -238,6 +274,7 @@ def agent_loop(
         if on_checkpoint is not None and compacted_result.was_compacted:
             on_checkpoint()
 
+        tool_context.raise_if_cancelled()
         response, streamed_live_text = _call_provider_for_turn(
             provider=provider,
             api_messages=api_messages,
@@ -245,6 +282,7 @@ def agent_loop(
             stream=stream,
             on_text_chunk=on_text_chunk,
         )
+        tool_context.raise_if_cancelled()
         turn_count += 1
         detector.begin_turn(response.content or "")
         # Collect usage info
@@ -327,6 +365,7 @@ def agent_loop(
             tool_input = tool_use["input"]
             
             try:
+                tool_context.raise_if_cancelled()
                 _safe_call_handler(
                     on_event, 
                     ToolEvent(
@@ -344,6 +383,7 @@ def agent_loop(
                 )
                 
                 result = tool_registry.dispatch(tool_call, tool_context)
+                tool_context.raise_if_cancelled()
                 result_output = result.output
                         
                 _safe_call_handler(
@@ -368,10 +408,10 @@ def agent_loop(
                     on_checkpoint()
                             
             except (KeyboardInterrupt, EOFError):
-                conversation.repair_pending_tool_results()
                 raise
 
             except Exception as e:
+                tool_context.raise_if_cancelled()
                 error_str = f"Error: {e}"
 
                 _safe_call_handler(
@@ -395,7 +435,9 @@ def agent_loop(
                 if on_checkpoint is not None:
                     on_checkpoint()
 
-        reason, check_usage, periodic_due = detector.check(provider, tool_context.session_log)
+        tool_context.raise_if_cancelled()
+        reason, check_usage, _ = detector.check(provider, tool_context.session_log)
+        tool_context.raise_if_cancelled()
         for key in total_usage:
             total_usage[key] += check_usage.get(key, 0)
         if reason:
@@ -409,20 +451,6 @@ def agent_loop(
             conversation.add_user_message(reminder)
             if tool_context.session_log is not None:
                 tool_context.session_log.record("loop_feedback", {"turn": detector.turn_count, "reason": reason})
-        if periodic_due:
-            try:
-                task_context = format_task_context(tool_context.task_store)
-            except Exception as exc:
-                task_context = (
-                    "\n\nTask state could not be read for this reminder. "
-                    "Do not infer that the plan is empty or complete. "
-                    "Use TaskList to retrieve the current state."
-                )
-                if tool_context.session_log is not None:
-                    tool_context.session_log.record_exception(
-                        "task_reminder_read_failed", exc
-                    )
-            conversation.add_user_message(TUTORIAL_REMINDER + task_context)
         if on_checkpoint is not None:
             on_checkpoint()
 

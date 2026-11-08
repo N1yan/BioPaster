@@ -4,6 +4,7 @@ import sys
 from io import StringIO
 from pathlib import Path
 from datetime import datetime, timezone
+from threading import Event
 
 from biopaster.agent.session import (
     SessionSnapshot,
@@ -42,6 +43,7 @@ from biopaster.config import (
 )
 from biopaster.mcp.config import parse_mcp_servers
 from biopaster.mcp.manager import open_mcp_tools
+from biopaster.diagnostics import background_logging
 from biopaster.tool_system.registry import ToolRegistry
 from biopaster.providers.anthropic_provider import AnthropicProvider
 from biopaster.providers.openai_provider import OpenAIProvider
@@ -1074,6 +1076,7 @@ class BioPasterStreamingREPL:
     
     def chat(self, user_input: str) -> None:
         self._close_execution_view()
+        self.tool_context.cancel_event = Event()
         self.conversation.loop_detector.begin_task()
         self.conversation.add_user_message(user_input)
         replay_turn = ReplayTurn(user=user_input)
@@ -1084,6 +1087,7 @@ class BioPasterStreamingREPL:
             multiline=self.multiline_mode,
             task_store=self.tool_context.task_store,
             render_history=self._render_resize_history,
+            cancel_event=self.tool_context.cancel_event,
         )
         self._execution_view = view
         view.refresh_tasks()
@@ -1125,6 +1129,7 @@ class BioPasterStreamingREPL:
                 on_text_chunk=on_text_chunk,
                 on_event=on_event,
                 on_checkpoint=lambda: self._autosave_session(interrupted=True),
+                cancel_event=self.tool_context.cancel_event,
             )
         except (KeyboardInterrupt, EOFError) as e:
             self.session_log.record_exception("run_interrupted", e)
@@ -1214,7 +1219,7 @@ class BioPasterStreamingREPL:
                 
             server_configs = mcp_config.servers
 
-            with open_mcp_tools(server_configs) as mcp_startup:
+            with background_logging(), open_mcp_tools(server_configs) as mcp_startup:
                 self.tool_registry = build_default_registry(
                     self.notebook_kernels,
                     extra_tools=mcp_startup.tools.values(),

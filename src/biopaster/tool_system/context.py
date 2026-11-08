@@ -10,6 +10,7 @@ from ..agent.session_log import SessionLog
 import os
 from ..skills.model import Skill
 from ..tasks.store import TaskStore
+from threading import Event
 
 
 @dataclass
@@ -26,6 +27,11 @@ class ToolContext:
    session_log: SessionLog | None = None
    active_tool_use_id: str | None = None
    task_store: TaskStore | None = None
+   cancel_event: Event = field(default_factory=Event, repr=False, compare=False)
+
+   def raise_if_cancelled(self) -> None:
+      if self.cancel_event.is_set():
+         raise KeyboardInterrupt()
 
    def __post_init__(self):
       self.workspace_root = Path(self.workspace_root).resolve()

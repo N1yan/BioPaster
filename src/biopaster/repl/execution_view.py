@@ -69,7 +69,7 @@ class ExecutionView:
     """
 
     def __init__(self, session, *, multiline=False, interrupt=None, task_store=None,
-                 render_history=None):
+                 render_history=None, cancel_event=None):
         self.session = session
         self.render_history = render_history
         self._terminal_size = None
@@ -102,7 +102,12 @@ class ExecutionView:
         self._permission = None
         self._permission_future = None
         self._draft = Document("")
-        self._interrupt = interrupt or (lambda: os.kill(os.getpid(), signal.SIGINT))
+        self.cancel_event = cancel_event if cancel_event is not None else threading.Event()
+        notify_interrupt = interrupt or (lambda: os.kill(os.getpid(), signal.SIGINT))
+        def request_interrupt():
+            self.cancel_event.set()
+            notify_interrupt()
+        self._interrupt = request_interrupt
         self.thread = threading.Thread(target=self._run, name="biopaster-input", daemon=True)
         self.control = FormattedTextControl(self._render, focusable=False,
                                            get_cursor_position=lambda: Point(0, self.scroll_line))
@@ -362,6 +367,7 @@ class ExecutionView:
         @bindings.add("c-c", eager=True, filter=Condition(lambda: self.running))
         def interrupt(event):
             with self._lock:
+                self.cancel_event.set()
                 if self.permission_pending:
                     future = self._permission_future
                     self._clear_permission()

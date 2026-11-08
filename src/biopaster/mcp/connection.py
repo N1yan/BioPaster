@@ -1,6 +1,7 @@
 from mcp import StdioServerParameters, ClientSession
 from mcp.client.stdio import stdio_client
 from contextlib import asynccontextmanager, AsyncExitStack
+import os
 import httpx
 from mcp.client.streamable_http import streamable_http_client
 from .config import (
@@ -20,14 +21,17 @@ async def connect_stdio(server_config: StdioServerConfig):
         cwd=server_config.cwd
     )
     
-    async with stdio_client(server_parameters) as (
-        read_stream,
-        write_stream,
-    ):
-        async with ClientSession(read_stream, write_stream) as session:
-            with fail_after(server_config.connect_timeout_seconds):
-                await session.initialize()
-            yield session
+    # Keep this descriptor open until the transport and its child have exited.
+    # stdout remains the MCP protocol channel.
+    with open(os.devnull, "w", encoding="utf-8") as errlog:
+        async with stdio_client(server_parameters, errlog=errlog) as (
+            read_stream,
+            write_stream,
+        ):
+            async with ClientSession(read_stream, write_stream) as session:
+                with fail_after(server_config.connect_timeout_seconds):
+                    await session.initialize()
+                yield session
                       
 @asynccontextmanager
 async def connect_http(server_config: HttpServerConfig):

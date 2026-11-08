@@ -72,6 +72,7 @@ class ToolRegistry:
     
     
     def dispatch(self, call: ToolCall, context: ToolContext) -> ToolResult:
+        context.raise_if_cancelled()
         tool_name = call.name
 
         def error_result(message: str) -> ToolResult:
@@ -142,9 +143,12 @@ class ToolRegistry:
                 targets=targets,
             )
 
+            context.raise_if_cancelled()
             context.permission_context.authorize(request)
+            context.raise_if_cancelled()
 
             result = tool.run(prepared_input, context)
+            context.raise_if_cancelled()
             return replace(
                 result,
                 name=tool_name,
@@ -158,6 +162,7 @@ class ToolRegistry:
         except ToolInputError as e:
             return error_result(f"Tool {tool_name} invalid input: {e}")
         except Exception as e:
+            context.raise_if_cancelled()
             return error_result(f"Tool {tool_name} failed: {e}")
         finally:
               context.active_tool_use_id = previous_tool_use_id

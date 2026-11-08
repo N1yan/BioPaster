@@ -8,6 +8,10 @@ from typing import Any, Mapping
 from pathlib import Path
 import tempfile
 import os
+from subprocess import DEVNULL
+import asyncio
+from contextlib import asynccontextmanager, suppress
+from threading import Event
 
 import nbformat
 from nbclient import NotebookClient
@@ -17,11 +21,38 @@ REFERENCE_HEADER = f"#{"-"*20}Reference{"-"*20}\n"
 COPIED_CONTENT_HEADER = f"#{"-"*20}Copied Content{"-"*20}\n"
 DEFAULT_TIMEOUT_SECONDS = 300
 
+
+class _ManagedNotebookClient(NotebookClient):
+    @asynccontextmanager
+    async def async_setup_kernel(self, **kwargs):
+        """Own kernel cleanup without nbclient's competing SIGINT handlers."""
+        kwargs.pop("cleanup_kc", None)
+        if self.km is None:
+            self.km = self.create_kernel_manager()
+        manager = self.km
+        try:
+            if not manager.has_kernel:
+                await self.async_start_new_kernel(**kwargs)
+            if self.kc is None:
+                await self.async_start_new_kernel_client()
+            yield
+        finally:
+            try:
+                if manager.has_kernel:
+                    await manager.shutdown_kernel(now=True)
+            finally:
+                if self.kc is not None:
+                    self.kc.stop_channels()
+                    self.kc = None
+                await manager.cleanup_resources()
+                self.km = None
+
 def _run_notebook_cell(
     code: str,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     kernel_name: str = "python3",
-    cwd: str | None = None
+    cwd: str | None = None,
+    cancel_event: Event | None = None,
 ):
     cell = nbformat.v4.new_code_cell(code)
     notebook =  nbformat.v4.new_notebook(cells=[cell])
@@ -29,13 +60,54 @@ def _run_notebook_cell(
         kernel_name=kernel_name,
         transport_encryption="disabled",
     )
-    client = NotebookClient(
+    client = _ManagedNotebookClient(
         notebook,
         timeout=timeout,
         km=kernel_manager,
         allow_errors=True,
         resources={"metadata": {"path": cwd or "."}})
-    client.execute(cleanup_kc=True)
+    # Only native process streams are discarded. Notebook messages (including
+    # cell output, images and errors) still arrive through Jupyter's channels.
+    cancelled = cancel_event if cancel_event is not None else Event()
+
+    async def execute():
+        task = asyncio.create_task(client.async_execute(stdout=DEVNULL, stderr=DEVNULL))
+
+        async def watch_cancel():
+            while not task.done():
+                if cancelled.is_set():
+                    task.cancel()
+                    return
+                await asyncio.sleep(0.05)
+
+        watcher = asyncio.create_task(watch_cancel())
+        try:
+            return await task
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        finally:
+            if task.cancelling():
+                cancelled.set()
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
+
+    if cancelled.is_set():
+        raise KeyboardInterrupt()
+    try:
+        # asyncio.run owns SIGINT cancellation and waits for async cleanup.
+        # nbclient must not replace its signal handler.
+        asyncio.run(execute())
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        cancelled.set()
+        raise KeyboardInterrupt() from None
+    except Exception:
+        if cancelled.is_set():
+            raise KeyboardInterrupt() from None
+        raise
+    if cancelled.is_set():
+        raise KeyboardInterrupt()
     
     return notebook
 
@@ -332,7 +404,8 @@ class ExecuteCodeTool:
             code=command,
             timeout=timeout_s,
             kernel_name=kernel_name,
-            cwd=cwd
+            cwd=cwd,
+            cancel_event=context.cancel_event,
         )
 
         tool_outputs, has_error = _notebook_output_parse(notebook)

@@ -67,7 +67,7 @@ class McpToolBinding:
         
     async def call(self, arguments: dict) -> ToolResult:
         self.validate_arguments(arguments)
-        mcp_result =  await self.session.call_tool(
+        mcp_result = await self.session.call_tool(
             self.original_tool_name,
             arguments=arguments
         )

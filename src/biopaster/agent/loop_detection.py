@@ -4,11 +4,12 @@ import hashlib
 import json
 
 
-GUIDANCE = (
-    "Review the previous attempts and reconsider your approach.\n"
-    "Consult relevant tutorials, documentation, or skills where needed.\n"
-    "Avoid repeating the failed approach without new evidence."
-)
+GUIDANCE = """Before continuing the original task, complete these steps in order:
+1. Use webSearch to find a tutorial for the unsuccessful operation, or skill to load applicable guidance.
+2. Use webFetch or Read to read the relevant instructions. A search snippet or an unreadable page does not complete this step.
+3. Quote the relevant instruction and compare it with the actual failed attempt. Check the exact names, arguments, and operation; similar-looking instructions are not necessarily the same. Do not claim that the documented instruction already failed unless the recorded attempt actually matches it.
+4. Carry out the smallest applicable step from those instructions, using the exact documented names. Use its actual result to continue the original task.
+Do not try another repair or workaround before reading the guidance. Do not replace a documented next step with speculative diagnostics or an unsupported alternative."""
 
 CHECK_PROMPT = """# Your role
 
@@ -265,7 +266,7 @@ class LoopDetector:
     def check(self, provider, log=None):
         """Return (reason or None, usage, periodic_due). Fail open on errors.
 
-        The saved check boundary drives both semantic checks and reminders.
+        The saved check boundary drives periodic semantic checks.
         Early exact-repeat warnings do not shift the five-turn schedule.
         """
         boundary = (self.turn_count // 5) * 5
@@ -367,7 +368,7 @@ class LoopDetector:
             self.status = "stuck"
             return None
         self.warned_at = self.turn_count
-        return "[Runtime feedback]\n" + reason + "\n\n" + "\n\n".join([GUIDANCE] * 3)
+        return GUIDANCE
 
     def to_dict(self):
         return asdict(self)
