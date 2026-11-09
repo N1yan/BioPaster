@@ -1077,7 +1077,7 @@ class BioPasterStreamingREPL:
     def chat(self, user_input: str) -> None:
         self._close_execution_view()
         self.tool_context.cancel_event = Event()
-        self.conversation.loop_detector.begin_task()
+        self.conversation.begin_task()
         self.conversation.add_user_message(user_input)
         replay_turn = ReplayTurn(user=user_input)
         self.replay_history.turns.append(replay_turn)

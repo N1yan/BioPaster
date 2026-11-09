@@ -44,6 +44,15 @@ class Conversation:
     """Conversation manager."""
     messages: list[Message] = field(default_factory=list)
     loop_detector: LoopDetector = field(default_factory=LoopDetector)
+    output_token_recovery_count: int = 0
+    tool_call_recovery_count: int = 0
+
+    def begin_task(self):
+        """Preserve recovery state for interrupted work; reset for a new task."""
+        if self.loop_detector.status != "running":
+            self.output_token_recovery_count = 0
+            self.tool_call_recovery_count = 0
+        self.loop_detector.begin_task()
     
     def add_message(self, role: str, content: Union[str, list[ContentBlock]]):
         self.messages.append(Message(role=role, content=content))
@@ -163,7 +172,9 @@ class Conversation:
                 "_is_internal": message._is_internal,
             })
 
-        return {"messages": messages, "loop_detector": self.loop_detector.to_dict()}
+        return {"messages": messages, "loop_detector": self.loop_detector.to_dict(),
+                "output_token_recovery_count": self.output_token_recovery_count,
+                "tool_call_recovery_count": self.tool_call_recovery_count}
     
     
     @classmethod
@@ -274,7 +285,13 @@ class Conversation:
                 _is_internal=internal,
             ))
 
-        return cls(messages=messages, loop_detector=LoopDetector.from_dict(data.get("loop_detector")))
+        recovery_counts = {key: data.get(key, 0) for key in
+                           ("output_token_recovery_count", "tool_call_recovery_count")}
+        for key, value in recovery_counts.items():
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{key} must be a non-negative integer.")
+        return cls(messages=messages, loop_detector=LoopDetector.from_dict(data.get("loop_detector")),
+                   **recovery_counts)
     
     
     def repair_pending_tool_results(self) -> list[str]:

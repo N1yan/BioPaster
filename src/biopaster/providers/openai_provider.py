@@ -5,7 +5,7 @@ from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
-from .base import ChatResponse, MessageInput, prepare_messages
+from .base import ChatResponse, MessageInput, ToolCallFormatError, prepare_messages, validate_tool_calls
 
 
 def convert_tools(
@@ -356,43 +356,7 @@ class OpenAIProvider:
                 f"{finish_reason!r}"
             )
 
-        tool_uses = []
-
-        if finish_reason == "tool_calls":
-            if not tool_calls:
-                raise ValueError("Response ended with tool_calls but has none")
-
-            seen_ids = set()
-
-            for call in tool_calls:
-                call_id = call["id"]
-                function = call["function"]
-                name = function["name"]
-
-                if not isinstance(call_id, str) or not call_id:
-                    raise ValueError("Tool call ID must be a non-empty string")
-                if call_id in seen_ids:
-                    raise ValueError(f"Duplicate tool call ID: {call_id}")
-                if not isinstance(name, str) or not name:
-                    raise ValueError("Tool name must be a non-empty string")
-
-                arguments = json.loads(function["arguments"])
-                if not isinstance(arguments, dict):
-                    raise ValueError("Tool arguments must be a JSON object")
-
-                seen_ids.add(call_id)
-                tool_uses.append({
-                    "id": call_id,
-                    "name": name,
-                    "input": arguments,
-                })
-
-        elif finish_reason == "stop" and tool_calls:
-            raise ValueError(
-                "Response contains tool calls but ended with stop"
-            )
-
-        return ChatResponse(
+        response = ChatResponse(
             content=content,
             model=model,
             usage={
@@ -401,8 +365,28 @@ class OpenAIProvider:
             },
             finish_reason=finish_reasons[finish_reason],
             reasoning_content=reasoning_content or None,
-            tool_uses=tool_uses or None,
         )
+        if finish_reason == "length":
+            return response
+
+        def invalid(message):
+            raise ToolCallFormatError(message, response=response, details=tool_calls)
+
+        tool_uses = []
+        for call in tool_calls:
+            if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
+                invalid("Each tool call must contain a function object.")
+            function = call["function"]
+            raw_arguments = function.get("arguments")
+            if not isinstance(raw_arguments, str):
+                invalid("Tool arguments must be a JSON-encoded string.")
+            try:
+                arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError as exc:
+                invalid(f"Invalid argument JSON for tool {function.get('name')!r}: {exc}")
+            tool_uses.append({"id": call.get("id"), "name": function.get("name"), "input": arguments})
+        response.tool_uses = tool_uses or None
+        return validate_tool_calls(response, details=tool_calls)
         
         
     async def _consume_stream(

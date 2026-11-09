@@ -1,7 +1,7 @@
 from typing import Any, Optional, Callable
 import asyncio
 from anthropic import Anthropic, AsyncAnthropic
-from .base import ChatResponse, prepare_messages
+from .base import ChatResponse, prepare_messages, validate_tool_calls
 from uuid import uuid4
 
 class AnthropicProvider:
@@ -43,29 +43,30 @@ class AnthropicProvider:
         """Convert Anthropic SDK response into the shared ChatResponse shape."""
         content_text = ""
         tool_uses: list[dict[str, Any]] = []
+        finish_reason = str(getattr(response, "stop_reason", "stop"))
         
         for block in response.content:
             block_type = getattr(block, "type", "text")
             if block_type == "text":
                 block_text = getattr(block, "text", "")
                 content_text += block_text
-            elif block_type == "tool_use":
+            elif block_type == "tool_use" and finish_reason != "max_tokens":
                 tool_uses.append({
-                    "id": str(getattr(block, "id", "")),
-                    "name": str(getattr(block, "name", "")),
-                    "input": dict(getattr(block, "input", {})),
+                    "id": getattr(block, "id", None),
+                    "name": getattr(block, "name", None),
+                    "input": getattr(block, "input", None),
                 })
         usage = getattr(response, "usage", None)
-        return ChatResponse(
+        return validate_tool_calls(ChatResponse(
             content=content_text,
             model=getattr(response, "model", self.model or ""),
             usage={
                 "input_tokens": getattr(usage, "input_tokens", 0),
                 "output_tokens": getattr(usage, "output_tokens", 0),
             },
-            finish_reason=str(getattr(response, "stop_reason", "stop")),
+            finish_reason=finish_reason,
             tool_uses=tool_uses if tool_uses else None,
-        )
+        ))
 
     def _apply_thinking_settings(self, request: dict) -> None:
         """Resolve per-call overrides before translating the endpoint's wire format."""
