@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from .base import ChatResponse, MessageInput, ToolCallFormatError, prepare_messages, validate_tool_calls
+from .response_validation import InvalidAPIResponseError, StreamGuard, retry_invalid_response
 
 
 def convert_tools(
@@ -351,9 +352,11 @@ class OpenAIProvider:
         }
 
         if finish_reason not in finish_reasons:
-            raise ValueError(
+            if finish_reason == "content_filter":
+                raise RuntimeError("The model response was blocked by a content filter.")
+            raise InvalidAPIResponseError(
                 f"Incomplete or unsupported response termination: "
-                f"{finish_reason!r}"
+                f"{finish_reason!r}", retryable=not content and not tool_calls,
             )
 
         response = ChatResponse(
@@ -397,6 +400,8 @@ class OpenAIProvider:
         on_text_chunk: Callable[[str], None] | None = None,
     ) -> ChatResponse:
         """Assemble streaming chunks before exposing executable tool calls."""
+        from openai import APIResponseValidationError
+        guard = StreamGuard()
         text_parts = []
         reasoning_parts = []
         tool_calls: dict[int, dict[str, Any]] = {}
@@ -404,7 +409,9 @@ class OpenAIProvider:
         finish_reason = None
         response_model = model
 
-        async for chunk in stream:
+        async for chunk in guard.aiter(stream, APIResponseValidationError):
+            if not isinstance(getattr(chunk, "choices", None), list):
+                guard.invalid("API stream chunk has no valid choices array.")
             if chunk.model:
                 response_model = chunk.model
 
@@ -416,13 +423,13 @@ class OpenAIProvider:
                 continue
 
             if len(chunk.choices) != 1 or chunk.choices[0].index != 0:
-                raise ValueError("Expected a single response choice")
+                guard.invalid("Expected a single response choice")
 
             choice = chunk.choices[0]
             delta = choice.delta
 
             if finish_reason is not None:
-                raise ValueError("Received choice data after response termination")
+                guard.invalid("Received choice data after response termination")
 
             if delta.refusal:
                 raise RuntimeError(f"Model refused the request: {delta.refusal}")
@@ -435,11 +442,13 @@ class OpenAIProvider:
                 reasoning_parts.append(reasoning)
 
             if delta.content:
+                guard.output_started = True
                 text_parts.append(delta.content)
                 if on_text_chunk is not None:
                     on_text_chunk(delta.content)
 
             for fragment in delta.tool_calls or []:
+                guard.output_started = True
                 if fragment.type not in (None, "function"):
                     raise ValueError(
                         f"Unsupported tool call type: {fragment.type}"
@@ -467,6 +476,8 @@ class OpenAIProvider:
             if choice.finish_reason is not None:
                 finish_reason = choice.finish_reason
 
+        if finish_reason is None:
+            guard.invalid("API stream ended without a complete response or finish reason.")
         return self._build_chat_response(
             content="".join(text_parts),
             model=response_model,
@@ -489,6 +500,7 @@ class OpenAIProvider:
         stream = await client.chat.completions.create(**request)
 
         async with stream:
+            StreamGuard().check_headers(stream)
             return await self._consume_stream(
                 stream,
                 model=request["model"],
@@ -511,6 +523,7 @@ class OpenAIProvider:
         client_options: dict[str, Any] = {
             "api_key": self.api_key,
             "base_url": self.base_url,
+            "_strict_response_validation": True,
         }
 
         if max_retries is not None:
@@ -522,11 +535,14 @@ class OpenAIProvider:
         # Unlike the SDK's per-read timeout, this also bounds an active stream.
         async with asyncio.timeout(total_timeout):
             async with client_class(**client_options) as client:
-                return await self._stream_response(
-                    client,
-                    request,
-                    on_text_chunk=on_text_chunk,
-                )
+                for attempt in range(2):
+                    try:
+                        return await self._stream_response(
+                            client, request, on_text_chunk=on_text_chunk,
+                        )
+                    except InvalidAPIResponseError as error:
+                        if not retry_invalid_response(error, attempt, max_retries, self.session_log):
+                            raise
               
     def chat_stream_response(
         self,

@@ -19,6 +19,11 @@ from ..compact.auto_compact import (
 
 MAX_OUTPUT_TOKEN_RECOVERIES = 3
 MAX_TOOL_CALL_RECOVERIES = 2
+EMPTY_RESPONSE_RECOVERY_PROMPT = (
+    "Your previous response had no visible output or tool calls. "
+    "Continue the unfinished task and produce a user-visible response "
+    "or call the appropriate tool. Do not repeat work already completed."
+)
 OUTPUT_TOKEN_RECOVERY_PROMPT = """Your previous response reached the output token limit.
 Continue the unfinished task. Do not repeat completed work.
 Break the remaining work into smaller steps and keep your next response concise."""
@@ -233,7 +238,6 @@ def _agent_loop(
             "input_schema": spec.input_schema,
         })
         
-    last_user_visible_message: str | None = None
     
     # ── content compact ──
     auto_compact_state = AutoCompactState(
@@ -377,6 +381,24 @@ def _agent_loop(
                 total_usage=total_usage,
             )
 
+        if not final_assistant_content.strip() and not tool_uses:
+            if (response.finish_reason in {"end_turn", "stop", "stop_sequence"}
+                    and conversation.empty_response_recovery_count == 0):
+                conversation.empty_response_recovery_count = 1
+                conversation.add_user_message(EMPTY_RESPONSE_RECOVERY_PROMPT)
+                if on_checkpoint is not None:
+                    on_checkpoint()
+                if tool_context.session_log is not None:
+                    tool_context.session_log.record("empty_response_recovery", {"attempt": 1})
+                continue
+            return finish_run(
+                text="", subtype="error_empty_response",
+                errors=["The model returned no text or tool calls "
+                        f"(finish_reason={response.finish_reason!r}); no further empty-response retry is available."],
+                on_event=on_event, turn_count=turn_count, total_usage=total_usage,
+            )
+
+        conversation.empty_response_recovery_count = 0
         conversation.output_token_recovery_count = 0
         conversation.tool_call_recovery_count = 0
             
@@ -406,25 +428,7 @@ def _agent_loop(
             ):
                 _emit_text_chunks(on_text_chunk, final_assistant_content)
 
-            if final_assistant_content.strip():
-                return finish_run(text=final_assistant_content, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
-
-            if last_user_visible_message is not None:
-                if stream:
-                    _emit_text_chunks(on_text_chunk, last_user_visible_message)
-                return finish_run(text=last_user_visible_message, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
-
-            return finish_run(
-                text="",
-                subtype="error_during_execution",
-                errors=[
-                    "The model returned no text or tool calls "
-                    f"(finish_reason={response.finish_reason!r})."
-                ],
-                on_event=on_event,
-                turn_count=turn_count,
-                total_usage=total_usage
-            )
+            return finish_run(text=final_assistant_content, on_event=on_event, turn_count=turn_count, total_usage=total_usage)
         
         # Call each tool
         for tool_index, tool_use in enumerate(tool_uses):

@@ -46,12 +46,14 @@ class Conversation:
     loop_detector: LoopDetector = field(default_factory=LoopDetector)
     output_token_recovery_count: int = 0
     tool_call_recovery_count: int = 0
+    empty_response_recovery_count: int = 0
 
     def begin_task(self):
         """Preserve recovery state for interrupted work; reset for a new task."""
         if self.loop_detector.status != "running":
             self.output_token_recovery_count = 0
             self.tool_call_recovery_count = 0
+            self.empty_response_recovery_count = 0
         self.loop_detector.begin_task()
     
     def add_message(self, role: str, content: Union[str, list[ContentBlock]]):
@@ -174,7 +176,8 @@ class Conversation:
 
         return {"messages": messages, "loop_detector": self.loop_detector.to_dict(),
                 "output_token_recovery_count": self.output_token_recovery_count,
-                "tool_call_recovery_count": self.tool_call_recovery_count}
+                "tool_call_recovery_count": self.tool_call_recovery_count,
+                "empty_response_recovery_count": self.empty_response_recovery_count}
     
     
     @classmethod
@@ -286,7 +289,8 @@ class Conversation:
             ))
 
         recovery_counts = {key: data.get(key, 0) for key in
-                           ("output_token_recovery_count", "tool_call_recovery_count")}
+                           ("output_token_recovery_count", "tool_call_recovery_count",
+                            "empty_response_recovery_count")}
         for key, value in recovery_counts.items():
             if type(value) is not int or value < 0:
                 raise ValueError(f"{key} must be a non-negative integer.")

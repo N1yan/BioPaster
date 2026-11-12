@@ -46,13 +46,39 @@ BioPaster 将生物医学知识源、文件和代码工具接入本地模型。�
 
 确认方案后，可以继续要求编写并执行代码、检查输出和调整分析。代码与结果保留在 Notebook 中，便于人工核查和后续复用。
 
-## ScholarQABench 生物医学子集
+## 评测结果
+
+在以下两个评测子集中，使用相同的 Bonsai 2 27B 模型时，BioPaster 相比 Claude Code 展现出两方面优势：**文献问答中更高的引用召回率与引用精确率**，以及**生物信息分析中更高的正确率与完成率**。尤其在长程任务中，BioPaster 随着执行时间增加继续获得正确结果，而 Claude Code 的正确率在约8分钟后便不再提升，即使将时间预算延长至60分钟，仍未解决更多长程任务（图3）。BioPaster 在 BixBench 全部任务上的平均耗时也更低。
+
+### ScholarQABench 生物医学子集
 
 BioPaster 使用 [Bonsai 2 27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf) 完成了 [ScholarQABench](https://github.com/AkariAsai/ScholarQABench) 生物医学子集中的 20 道题，并以 Claude Code 作为 harness 对照；两者使用相同模型。
 
-![ScholarQABench 生物医学 20 题的引用召回率与引用精确率](docs/assets/benchmark/scholarqa-bio-citation-scores.png)
+<p align="center">
+  <img src="docs/assets/benchmark/scholarqa-bio-citation-scores.png" alt="ScholarQABench 生物医学 20 题的引用召回率与引用精确率" width="480">
+</p>
 
 分数为逐题宏平均。**引用召回率**按每道题计算：至少获得一篇所引学术论文支持的实质性主张数 ÷ 答案中的实质性主张总数。**引用精确率**按每道题计算：确实支持对应主张的“主张—引用”关系数 ÷ 答案中全部“主张—引用”关系数。同一主张引用 3 篇论文，在召回率中计 1 个主张，在精确率中计 3 条关系；不支持主张的引用关系计入精确率分母、不计入分子。
+
+### BixBench 生物信息分析任务
+
+在 [BixBench v1.5](https://huggingface.co/datasets/futurehouse/BixBench) 的 20 道题上，BioPaster 与 Claude Code 使用相同的 [Bonsai 2 27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf) 模型，每题最多运行 60 分钟。
+
+<p align="center">
+  <img src="docs/assets/benchmark/bixbench-all-tasks.svg" alt="BixBench 全部20题的正确率、完成率与平均耗时">
+</p>
+
+正确率为答对题数占全部题目的比例；完成率为成功结束且提交非空答案的题目比例。平均耗时按全部20题计算，包含超时及失败的运行。
+
+<p align="center">
+  <img src="docs/assets/benchmark/bixbench-accuracy-over-time.svg" alt="BixBench 全部任务与长程任务在不同时间预算下的正确率">
+</p>
+
+图3：BixBench 全部任务与长程任务的时间预算曲线。
+
+曲线表示在给定时间内完成且答对的题目占比，分母包含超时及失败的题目。横轴为每题时间预算，纵轴为该时间内完成且答对的题目数除以该组题目总数；时间取实际运行的完成耗时。
+
+其中 13 道题被划为长程任务：需要至少三个相互依赖的实质性分析步骤，不计文件读写、查阅文档及排错。该分类由本项目制定。答案按数据集参考答案核对。
 
 ## 本地运行
 

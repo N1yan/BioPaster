@@ -4,6 +4,7 @@ import math
 from collections.abc import Callable
 from .openai_provider import OpenAIProvider
 from .base import ChatResponse
+from .response_validation import StreamGuard
 
 
 class LlamaCppProvider(OpenAIProvider):
@@ -198,17 +199,24 @@ class LlamaCppProvider(OpenAIProvider):
         stream = await client.chat.completions.create(**controlled_request)
 
         async with stream:
-            async with asyncio.TaskGroup() as tasks:
-                watchdog = tasks.create_task(watch_reasoning())
+            StreamGuard().check_headers(stream)
+            try:
+                async with asyncio.TaskGroup() as tasks:
+                    watchdog = tasks.create_task(watch_reasoning())
 
-                try:
-                    response = await self._consume_stream(
-                        observe_stream(stream),
-                        model=request["model"],
-                        on_text_chunk=on_text_chunk,
-                    )
-                finally:
-                    reasoning_finished.set()
-                    watchdog.cancel()
+                    try:
+                        response = await self._consume_stream(
+                            observe_stream(stream),
+                            model=request["model"],
+                            on_text_chunk=on_text_chunk,
+                        )
+                    finally:
+                        reasoning_finished.set()
+                        watchdog.cancel()
+            except ExceptionGroup as error:
+                # Preserve the response error type for the shared recovery paths.
+                if len(error.exceptions) == 1:
+                    raise error.exceptions[0] from error
+                raise
 
         return response

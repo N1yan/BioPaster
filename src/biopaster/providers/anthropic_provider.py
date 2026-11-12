@@ -1,8 +1,32 @@
 from typing import Any, Optional, Callable
 import asyncio
-from anthropic import Anthropic, AsyncAnthropic
+from anthropic import Anthropic, AsyncAnthropic, APIResponseValidationError
 from .base import ChatResponse, prepare_messages, validate_tool_calls
+from .response_validation import InvalidAPIResponseError, StreamGuard, retry_invalid_response
 from uuid import uuid4
+
+
+class _MessageStreamGuard(StreamGuard):
+    def __init__(self):
+        super().__init__()
+        self.started = False
+        self.stopped = False
+
+    def observe(self, event):
+        if event.type == "message_start":
+            self.started = True
+        elif event.type == "message_stop":
+            self.stopped = True
+        elif event.type == "text" and event.text:
+            self.output_started = True
+        elif event.type == "content_block_start":
+            if event.content_block.type in {"text", "tool_use", "server_tool_use"}:
+                self.output_started = True
+
+    def finish(self):
+        if not self.started or not self.stopped:
+            self.invalid("API stream ended without a complete message_start/message_stop sequence.")
+
 
 class AnthropicProvider:
     def __init__(self, 
@@ -31,8 +55,9 @@ class AnthropicProvider:
 
     def _ensure_client(self):
         if self.client is None:
-            self.client = Anthropic(api_key=self.api_key, 
-                                    base_url=self.base_url)
+            self.client = Anthropic(api_key=self.api_key,
+                                    base_url=self.base_url,
+                                    _strict_response_validation=True)
         return self.client
     
     def validate_configuration(self) -> None:
@@ -120,20 +145,57 @@ class AnthropicProvider:
         self, request, *, total_timeout, max_retries, on_text_chunk, request_id,
     ):
         """Use cancellable I/O for requests with a whole-call deadline."""
-        options = {"api_key": self.api_key, "base_url": self.base_url}
+        options = {"api_key": self.api_key, "base_url": self.base_url,
+                   "_strict_response_validation": True}
         if max_retries is not None:
             options["max_retries"] = max_retries
         async with asyncio.timeout(total_timeout):
             async with AsyncAnthropic(**options) as client:
-                async with client.messages.stream(**request) as stream:
-                    async for event in stream:
-                        if self.session_log is not None:
-                            self.session_log.record("model_stream", {
-                                "request_id": request_id, "event": event,
-                            })
-                        if event.type == "text" and on_text_chunk is not None:
-                            on_text_chunk(event.text)
-                    return await stream.get_final_message()
+                for attempt in range(2):
+                    try:
+                        async with client.messages.stream(**request) as stream:
+                            guard = _MessageStreamGuard()
+                            guard.check_headers(stream)
+                            async for event in guard.aiter(stream, APIResponseValidationError):
+                                guard.observe(event)
+                                self._record_stream_event(event, request_id, on_text_chunk)
+                            guard.finish()
+                            message = await stream.get_final_message()
+                            return self._finish_message(message, guard, request_id)
+                    except InvalidAPIResponseError as error:
+                        if not retry_invalid_response(error, attempt, max_retries, self.session_log):
+                            raise
+
+    def _record_stream_event(self, event, request_id, on_text_chunk):
+        if self.session_log is not None:
+            self.session_log.record("model_stream", {"request_id": request_id, "event": event})
+        if event.type == "text" and on_text_chunk is not None:
+            on_text_chunk(event.text)
+
+    def _finish_message(self, message, guard, request_id):
+        if message.stop_reason is None:
+            guard.invalid("API message has no stop_reason.")
+        if self.session_log is not None:
+            self.session_log.record("model_response", {"request_id": request_id, "response": message})
+        return self._build_chat_response(message)
+
+    def _send_sync_request(self, request, *, max_retries, on_text_chunk, request_id):
+        client = self._ensure_client()
+        if max_retries is not None:
+            client = client.with_options(max_retries=max_retries)
+        for attempt in range(2):
+            try:
+                with client.messages.stream(**request) as stream:
+                    guard = _MessageStreamGuard()
+                    guard.check_headers(stream)
+                    for event in guard.iter(stream, APIResponseValidationError):
+                        guard.observe(event)
+                        self._record_stream_event(event, request_id, on_text_chunk)
+                    guard.finish()
+                    return self._finish_message(stream.get_final_message(), guard, request_id)
+            except InvalidAPIResponseError as error:
+                if not retry_invalid_response(error, attempt, max_retries, self.session_log):
+                    raise
 
     def chat_stream_response(
         self,
@@ -179,41 +241,16 @@ class AnthropicProvider:
                     raise RuntimeError(
                         "chat_stream_response with total_timeout must run outside an active event loop"
                     )
-                final_message = asyncio.run(self._send_timed_request(
+                response = asyncio.run(self._send_timed_request(
                     request, total_timeout=total_timeout, max_retries=max_retries,
                     on_text_chunk=on_text_chunk, request_id=request_id,
                 ))
             else:
-                client = self._ensure_client()
-                if max_retries is not None:
-                    client = client.with_options(max_retries=max_retries)
-
-                with client.messages.stream(**request) as stream:
-                    for event in stream:
-                        if log is not None:
-                            log.record(
-                                "model_stream",
-                                {
-                                    "request_id": request_id,
-                                    "event": event,
-                                },
-                            )
-
-                        if event.type == "text" and on_text_chunk is not None:
-                            on_text_chunk(event.text)
-
-                    final_message = stream.get_final_message()
-
-            if log is not None:
-                log.record(
-                    "model_response",
-                    {
-                        "request_id": request_id,
-                        "response": final_message,
-                    },
+                response = self._send_sync_request(
+                    request, max_retries=max_retries, on_text_chunk=on_text_chunk,
+                    request_id=request_id,
                 )
-
-            return self._build_chat_response(final_message)
+            return response
 
         except (Exception, KeyboardInterrupt) as e:
             if log is not None:
