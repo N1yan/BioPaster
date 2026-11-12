@@ -50,7 +50,7 @@ After reviewing the plan, you can ask the agent to write and execute code, inspe
 
 ## Evaluation results
 
-Across the two evaluation subsets below, using the same Bonsai 2 27B model, BioPaster achieved **higher citation recall and precision in literature-based question answering** and **higher accuracy and completion rates in bioinformatics analysis** than Claude Code. The advantage is particularly evident on long tasks: BioPaster continued to obtain correct results as execution time increased, while Claude Code’s accuracy plateaued after approximately 8 minutes, with no additional long tasks solved by 60 minutes (Figure 3). BioPaster also had a lower mean elapsed time across all BixBench tasks.
+Across the two evaluation subsets below, using the same Bonsai 2 27B model, BioPaster achieved **higher citation recall and precision in literature-based question answering** and **higher accuracy and completion rates in bioinformatics analysis** than Claude Code. The advantage is particularly evident on long tasks: **BioPaster achieved twice the accuracy of Claude Code (30.8% vs. 15.4%)**. BioPaster continued to obtain correct results as execution time increased, while Claude Code’s accuracy plateaued after approximately 8 minutes, with no additional long tasks solved by 60 minutes (Figure 3). BioPaster also had a lower mean elapsed time across all BixBench tasks.
 
 ### ScholarQABench biomedical subset
 
