@@ -50,7 +50,7 @@ After reviewing the plan, you can ask the agent to write and execute code, inspe
 
 ## Evaluation results
 
-Across the two evaluation subsets below, using the same Bonsai 2 27B model, BioPaster achieved **higher citation recall and precision in literature-based question answering** and **higher accuracy and completion rates in bioinformatics analysis** than Claude Code. The advantage is particularly evident on long tasks: BioPaster continued to obtain correct results as execution time increased, while Claude Code’s accuracy plateaued after approximately 8 minutes, with no additional long tasks solved even at a 60-minute budget (Figure 3). BioPaster also had a lower mean elapsed time across all BixBench tasks.
+Across the two evaluation subsets below, using the same Bonsai 2 27B model, BioPaster achieved **higher citation recall and precision in literature-based question answering** and **higher accuracy and completion rates in bioinformatics analysis** than Claude Code. The advantage is particularly evident on long tasks: BioPaster continued to obtain correct results as execution time increased, while Claude Code’s accuracy plateaued after approximately 8 minutes, with no additional long tasks solved by 60 minutes (Figure 3). BioPaster also had a lower mean elapsed time across all BixBench tasks.
 
 ### ScholarQABench biomedical subset
 
@@ -59,6 +59,8 @@ BioPaster was evaluated on 20 biomedical questions from [ScholarQABench](https:/
 <p align="center">
   <img src="docs/assets/benchmark/scholarqa-bio-citation-scores.png" alt="Citation recall and precision on 20 biomedical ScholarQABench questions" width="480">
 </p>
+
+Figure 1. Citation recall and precision on the ScholarQABench biomedical subset.
 
 Scores are per-question macro averages. **Citation recall** is calculated for each answer as the number of substantive claims supported by at least one cited academic paper divided by the total number of substantive claims. **Citation precision** is the number of answer–citation pairs where the cited paper supports that answer claim, divided by all answer–citation pairs. A claim citing three papers contributes one claim to recall and three pairs to precision; unsupported pairs count in the precision denominator but not its numerator.
 
@@ -70,15 +72,17 @@ BioPaster and Claude Code were evaluated on 20 questions from [BixBench v1.5](ht
   <img src="docs/assets/benchmark/bixbench-all-tasks.svg" alt="Accuracy, completion rate, and mean elapsed time on all 20 BixBench questions">
 </p>
 
+Figure 2. Accuracy, completion rate, and mean elapsed time on all BixBench tasks.
+
 Accuracy is the fraction of all questions answered correctly. Completion rate is the fraction of runs that finished successfully with a nonempty answer. Mean elapsed time includes all 20 questions, including timeouts and failures.
 
 <p align="center">
-  <img src="docs/assets/benchmark/bixbench-accuracy-over-time.svg" alt="Accuracy within a time budget on all BixBench tasks and long tasks">
+  <img src="docs/assets/benchmark/bixbench-accuracy-over-time.svg" alt="Proportion of tasks completed correctly over time on all BixBench tasks and long tasks">
 </p>
 
-Figure 3. Accuracy within a time budget on all BixBench tasks and long tasks.
+Figure 3. Proportion of tasks completed correctly over time.
 
-Each curve shows the proportion of questions completed correctly within a given time budget. The horizontal axis is the per-question time budget; the vertical axis is the number completed correctly within that time divided by all questions in the group, including timeouts and failures. Times are measured at run completion.
+Each curve shows the proportion of questions completed correctly by a given elapsed time. The horizontal axis is the elapsed time per question; the vertical axis is the number completed correctly within that time divided by all questions in the group, including timeouts and failures. Times are measured at run completion.
 
 Thirteen questions are classified as long tasks, requiring at least three dependent, substantive analysis steps, excluding file I/O, documentation lookup, and debugging. This classification is defined by this project. Answers are checked against the dataset's reference answers.
 
