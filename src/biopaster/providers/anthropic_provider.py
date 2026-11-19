@@ -167,8 +167,6 @@ class AnthropicProvider:
                             raise
 
     def _record_stream_event(self, event, request_id, on_text_chunk):
-        if self.session_log is not None:
-            self.session_log.record("model_stream", {"request_id": request_id, "event": event})
         if event.type == "text" and on_text_chunk is not None:
             on_text_chunk(event.text)
 
@@ -176,7 +174,7 @@ class AnthropicProvider:
         if message.stop_reason is None:
             guard.invalid("API message has no stop_reason.")
         if self.session_log is not None:
-            self.session_log.record("model_response", {"request_id": request_id, "response": message})
+            self.session_log.record_model_response(request_id, message)
         return self._build_chat_response(message)
 
     def _send_sync_request(self, request, *, max_retries, on_text_chunk, request_id):
@@ -223,13 +221,7 @@ class AnthropicProvider:
         log = self.session_log
 
         if log is not None:
-            log.record(
-                "model_request",
-                {
-                    "request_id": request_id,
-                    "request": request,
-                },
-            )
+            log.record_model_request(request_id, request)
 
         try:
             if total_timeout is not None:

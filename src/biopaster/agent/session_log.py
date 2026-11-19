@@ -100,6 +100,26 @@ class SessionLog:
             with self.path.open("a", encoding="utf-8") as file:
                 file.write(line + "\n")
 
+    def record_model_request(self, request_id, request):
+        """Keep generation settings, never replay conversation or tool schemas."""
+        keys = ("model", "max_tokens", "max_completion_tokens", "temperature",
+                "top_p", "seed", "reasoning_effort", "thinking", "stream")
+        settings = {key: request[key] for key in keys if key in request}
+        template = request.get("extra_body", {}).get("chat_template_kwargs")
+        if template is not None:
+            settings["chat_template_kwargs"] = template
+        self.record("model_request", {"request_id": request_id, "settings": settings})
+
+    def record_model_response(self, request_id, response):
+        """Content belongs to the executing agent, not the transport log."""
+        self.record("model_response", {
+            "request_id": request_id,
+            "model": getattr(response, "model", None),
+            "finish_reason": getattr(response, "finish_reason", None)
+                or getattr(response, "stop_reason", None),
+            "usage": getattr(response, "usage", None),
+        })
+
     def record_exception(self, event_type: str, exc: BaseException):
         if not self.enabled:
             return
@@ -123,9 +143,9 @@ class SessionLog:
         """Open a saved session's log for subsequent appends."""
         return cls(root, session_id=session_id, enabled=enabled)
 
-    def start_run(self, user_input: str):
+    def start_run(self, user_input: str | None = None):
         self.run_id = uuid4().hex
-        self.record("run_start", {"user_input": user_input})
+        self.record("run_start", {"user_input": user_input} if user_input is not None else {"resumed": True})
 
     def end_run(self, status: str):
         self.record("run_end", {"status": status})

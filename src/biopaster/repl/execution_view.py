@@ -68,14 +68,13 @@ class ExecutionView:
     changes are restored when the next question is submitted or the view closes.
     """
 
-    def __init__(self, session, *, multiline=False, interrupt=None, task_store=None,
+    def __init__(self, session, *, interrupt=None, task_store=None,
                  render_history=None, cancel_event=None):
         self.session = session
         self.render_history = render_history
         self._terminal_size = None
         self._container = next(c for c in walk(session.app.layout.container)
                                if isinstance(c, FloatContainer))
-        self.multiline = multiline
         self.expanded = False
         self.running = True
         self.entries = []
@@ -475,8 +474,8 @@ class ExecutionView:
             session.default_buffer.accept_handler = self._accept
             session.app.erase_when_done = True
             result = session.prompt(
-                lambda: [("class:prompt", "Choose (default: 0): " if self.permission_pending else "... " if self.multiline else "❯ ")],
-                multiline=Condition(lambda: self.multiline and not self.permission_pending),
+                lambda: [("class:prompt", "Choose (default: 0): " if self.permission_pending else "❯ ")],
+                multiline=Condition(lambda: not self.permission_pending),
                 key_bindings=self._bindings(saved["key_bindings"]),
                 completer=DynamicCompleter(lambda: None if self.permission_pending else saved["completer"]),
                 refresh_interval=0.1, pre_run=self._ready.set,

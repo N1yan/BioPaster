@@ -308,15 +308,36 @@ def _get_summary_max_tokens(
     )
 
 
+IMAGE_TOKEN_ESTIMATE = 1200
+
+
 def _estimate_input_tokens(
     messages: list[dict[str, Any]],
     system_prompt: str,
     tools: list[dict[str, Any]],
 ) -> int:
+    image_count = 0
+
+    def estimate_block(block):
+        nonlocal image_count
+        if not isinstance(block, dict):
+            return block
+        if block.get("type") == "image":
+            image_count += 1
+            return {"type": "image"}
+        if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+            return {**block, "content": [estimate_block(item) for item in block["content"]]}
+        return block
+
+    estimated_messages = [
+        {**message, "content": [estimate_block(block) for block in message["content"]]}
+        if isinstance(message.get("content"), list) else message
+        for message in messages
+    ]
     request_content = {
         "system": system_prompt,
         "tools": tools,
-        "messages": messages,
+        "messages": estimated_messages,
     }
 
     encoded = json.dumps(
@@ -325,7 +346,7 @@ def _estimate_input_tokens(
         separators=(",", ":"),
     ).encode("utf-8")
 
-    return max(1, math.ceil(len(encoded) / 3))
+    return max(1, math.ceil(len(encoded) / 3) + image_count * IMAGE_TOKEN_ESTIMATE)
 
 def auto_compact_messages(
     messages: list[Message],

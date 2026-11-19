@@ -585,10 +585,7 @@ class OpenAIProvider:
             self._apply_thinking_settings(request, thinking)
 
             if log is not None:
-                log.record(
-                    "model_request",
-                    {"request_id": request_id, "request": request},
-                )
+                log.record_model_request(request_id, request)
 
             response = asyncio.run(
                 self._send_request(
@@ -601,10 +598,7 @@ class OpenAIProvider:
             )
 
             if log is not None:
-                log.record(
-                    "model_response",
-                    {"request_id": request_id, "response": response},
-                )
+                log.record_model_response(request_id, response)
 
             return response
 

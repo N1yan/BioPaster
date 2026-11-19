@@ -230,7 +230,7 @@ The code tool uses `notebook.ipynb` in the workspace by default. Starting BioPas
 | `/resume` | Use arrow keys to select and resume a saved session |
 | `/delete` | Select an inactive saved session and confirm permanent deletion of its snapshot, logs, session tool results, and task records; workspace files are kept |
 | `/permissions` | View and adjust tool permissions for the current session |
-| `/multiline` | Toggle multiline input |
+| `Enter` | Send message |
 | `/exit` or `/quit` | Exit |
 | `Ctrl+O` | Expand or collapse execution details for the current request |
 | `PgUp` / `PgDn` | Scroll execution details or the final answer |
@@ -256,6 +256,8 @@ Local data is primarily stored in these locations:
 | Workspace | Downloaded files, analysis outputs, and notebooks |
 
 Detailed event logs (`events.jsonl`) are disabled by default. Set `session.log_enabled` to `true` in the configuration and restart to enable them for debugging. Session snapshots and task recovery still work with logging disabled. Existing event logs are kept, but are not appended to while logging is disabled.
+
+Logs record user input, assistant replies, tool calls and results, injected reminders, compaction summaries, and error recovery in chronological order. Fixed system prompts, tool definitions, repeated conversation history, and individual streaming fragments are omitted; provider records contain request settings and response status/usage only. Existing logs are not rewritten.
 
 Older files in the shared `~/.biopaster/.tool_results/` directory are not moved or deleted automatically, so existing references remain usable. New results, including those generated after resuming an older session, are stored under that session's directory and removed by `/delete`.
 

@@ -259,6 +259,10 @@ class ExecuteCodeTool:
                 "Execute code in a Jupyter notebook cell using one of the configured "
                 "kernels. Each call starts a fresh kernel: variables, imports, and "
                 "in-memory objects do not persist between calls. "
+                "The notebook records only cells that executeCode runs successfully. "
+                "Once a cell is recorded, it is read-only. To correct or rerun code, "
+                "call executeCode with the corrected code in a new cell. "
+                "Do not use Edit or Write to modify recorded cells. "
                 "The kernels listed below were validated when BioPaster started. "
                 f"Available kernels: {kernel_details}."
             ),

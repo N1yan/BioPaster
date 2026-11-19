@@ -180,15 +180,26 @@ def agent_loop(
     # The UI supplies its turn token. Direct callers get a fresh token on each
     # invocation, even when they reuse the same conversation and ToolContext.
     tool_context.cancel_event = cancel_event if cancel_event is not None else Event()
+    log = tool_context.session_log
+    owns_run = log is not None and log.run_id is None
+    if owns_run:
+        latest_user = next((m.content for m in reversed(conversation.messages)
+                            if m.role == "user" and isinstance(m.content, str)
+                            and not m._is_internal), "")
+        log.start_run(None if conversation.loop_detector.status == "running" else latest_user)
+    run_status = "error"
     try:
         tool_context.raise_if_cancelled()
-        return _agent_loop(
+        result = _agent_loop(
             conversation, provider, tool_registry, tool_context, max_turns,
             stream, on_text_chunk, on_event, on_checkpoint,
         )
+        run_status = result.subtype
+        return result
     except BaseException as exc:
         if not isinstance(exc, (KeyboardInterrupt, EOFError)) and not tool_context.cancel_event.is_set():
             raise
+        run_status = "interrupted"
         tool_context.cancel_event.set()
         conversation.repair_pending_tool_results()
         if on_checkpoint is not None:
@@ -196,6 +207,9 @@ def agent_loop(
         if isinstance(exc, (KeyboardInterrupt, EOFError)):
             raise
         raise KeyboardInterrupt() from exc
+    finally:
+        if owns_run:
+            log.end_run(run_status)
 
 
 def _agent_loop(
@@ -216,6 +230,31 @@ def _agent_loop(
     
     detector = conversation.loop_detector
     conversation.begin_task()
+    log = tool_context.session_log
+    event_handler = on_event
+
+    def on_event(event):
+        if log is not None:
+            if isinstance(event, ToolEvent):
+                # Parameters are recorded at dispatch, not again on failure.
+                data = {"turn": detector.turn_count, "tool_use_id": event.tool_use_id,
+                        "tool_name": event.tool_name}
+                if event.kind == "tool_use":
+                    data["input"] = event.tool_input
+                else:
+                    data.update(output=event.tool_output, is_error=event.is_error,
+                                error=event.error)
+                log.record(event.kind, data)
+            else:
+                log.record("agent_result", {"status": event.subtype,
+                    "errors": event.errors, "num_turns": event.num_turns})
+        _safe_call_handler(event_handler, event)
+
+    def inject_message(text, reason):
+        conversation.add_user_message(text)
+        if log is not None:
+            log.record("injected_message", {"turn": detector.turn_count,
+                       "reason": reason, "content": text})
 
     def finish_run(**kwargs):
         tool_context.raise_if_cancelled()
@@ -255,9 +294,17 @@ def _agent_loop(
         }
         
         # compact messages
+        before_compaction = conversation.messages
         conversation.messages = micro_compact_messages(conversation.messages, 
                                                        keep_recent=5, 
                                                        cache_ttl_minutes=60)
+        if log is not None and log.enabled:
+            changed = [i for i, (old, new) in enumerate(zip(before_compaction, conversation.messages))
+                       if old != new]
+            if changed:
+                log.record("context_trimmed", {"turn": detector.turn_count,
+                           "message_indices": changed})
+        pre_compact_count = len(conversation.messages)
         compacted_result = auto_compact_messages(
             messages=conversation.messages,
             provider=provider,
@@ -279,6 +326,10 @@ def _agent_loop(
                 total_usage=total_usage,
             )
         conversation.messages = compacted_result.messages
+        if compacted_result.was_compacted and log is not None:
+            log.record("context_compacted", {"turn": detector.turn_count,
+                       "replaced_message_count": pre_compact_count,
+                       "messages": Conversation(messages=compacted_result.messages).to_dict()["messages"]})
         
         if tool_context.task_store is not None and compacted_result.was_compacted:
             try:
@@ -290,10 +341,11 @@ def _agent_loop(
                         "task_reminder_read_failed", exc
                     )
             if has_tasks:
-                conversation.add_user_message(
+                inject_message(
                     "The conversation was compacted. Task records are stored separately. "
                     "When continuing task-related work, call TaskList to retrieve the "
-                    "current task state. Use TaskGet when you need a task's full description."
+                    "current task state. Use TaskGet when you need a task's full description.",
+                    "task_state_after_compaction",
                 )
              
         api_messages = conversation.get_messages()
@@ -302,18 +354,33 @@ def _agent_loop(
 
         tool_context.raise_if_cancelled()
         tool_format_error = None
+        partial_text = []
+        def capture_text(text):
+            if log is not None and log.enabled:
+                partial_text.append(text)
+            if on_text_chunk is not None:
+                on_text_chunk(text)
         try:
             response, streamed_live_text = _call_provider_for_turn(
                 provider=provider,
                 api_messages=api_messages,
                 call_kwargs=call_kwargs,
                 stream=stream,
-                on_text_chunk=on_text_chunk,
+                on_text_chunk=capture_text,
             )
         except ToolCallFormatError as exc:
             tool_format_error = exc
             response = exc.response
             streamed_live_text = stream
+        except BaseException:
+            if log is not None and partial_text:
+                log.record("assistant_message", {"turn": detector.turn_count + 1,
+                    "content": "".join(partial_text), "partial": True})
+            raise
+        if log is not None:
+            log.record("assistant_message", {"turn": detector.turn_count + 1,
+                       "content": response.content or "", "partial": False,
+                       "finish_reason": response.finish_reason})
         tool_context.raise_if_cancelled()
         turn_count += 1
         detector.begin_turn(response.content or "")
@@ -338,7 +405,7 @@ def _agent_loop(
                     on_event=on_event, turn_count=turn_count, total_usage=total_usage,
                 )
             conversation.tool_call_recovery_count += 1
-            conversation.add_user_message(_tool_call_recovery_prompt(tool_format_error))
+            inject_message(_tool_call_recovery_prompt(tool_format_error), "tool_call_format_recovery")
             if on_checkpoint is not None:
                 on_checkpoint()
             if tool_context.session_log is not None:
@@ -359,7 +426,7 @@ def _agent_loop(
             # Keep only ordinary text; raw reasoning is not a replayable message.
             if conversation.output_token_recovery_count < MAX_OUTPUT_TOKEN_RECOVERIES:
                 conversation.output_token_recovery_count += 1
-                conversation.add_user_message(OUTPUT_TOKEN_RECOVERY_PROMPT)
+                inject_message(OUTPUT_TOKEN_RECOVERY_PROMPT, "output_token_recovery")
                 if on_checkpoint is not None:
                     on_checkpoint()
                 if tool_context.session_log is not None:
@@ -385,7 +452,7 @@ def _agent_loop(
             if (response.finish_reason in {"end_turn", "stop", "stop_sequence"}
                     and conversation.empty_response_recovery_count == 0):
                 conversation.empty_response_recovery_count = 1
-                conversation.add_user_message(EMPTY_RESPONSE_RECOVERY_PROMPT)
+                inject_message(EMPTY_RESPONSE_RECOVERY_PROMPT, "empty_response_recovery")
                 if on_checkpoint is not None:
                     on_checkpoint()
                 if tool_context.session_log is not None:
@@ -520,7 +587,7 @@ def _agent_loop(
                     errors=["Stopped after repeated unproductive actions despite runtime feedback. " + reason],
                     on_event=on_event, turn_count=turn_count, total_usage=total_usage,
                 )
-            conversation.add_user_message(reminder)
+            inject_message(reminder, "loop_recovery")
             if tool_context.session_log is not None:
                 tool_context.session_log.record("loop_feedback", {"turn": detector.turn_count, "reason": reason})
         if on_checkpoint is not None:

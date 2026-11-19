@@ -16,7 +16,7 @@ from biopaster.agent.session import (
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.current import get_app
-from prompt_toolkit.filters import Condition, has_completions, to_filter
+from prompt_toolkit.filters import Condition, to_filter
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout, HSplit, Window
@@ -144,21 +144,25 @@ def build_prompt_session(commands: list[str]) -> PromptSession:
     )
     bindings = KeyBindings()
 
-    @bindings.add(
-        "enter",
-        eager=True,
-        filter=has_completions & Condition(
-            lambda: not to_filter(session.multiline)()
-            and get_app().current_buffer.text.startswith("/")
-        ),
-    )
-    def accept_command_completion(event):
+    @bindings.add("enter", eager=True)
+    def submit(event):
         buffer = event.current_buffer
-        if buffer.complete_state.current_completion is None:
+        if (buffer.text.startswith("/") and "\n" not in buffer.text
+                and buffer.complete_state is not None
+                and buffer.complete_state.current_completion is None):
             buffer.go_to_completion(0)
         buffer.validate_and_handle()
 
+    @bindings.add("c-j", eager=True)
+    @bindings.add("escape", "enter", eager=True)
+    def newline(event):
+        # Choice/permission prompts explicitly disable multiline editing.
+        # Consume the key there rather than accidentally accepting a choice.
+        if to_filter(session.multiline)():
+            event.current_buffer.insert_text("\n")
+
     session = PromptSession(
+        multiline=True,
         history=InMemoryHistory(),
         completer=FuzzyCompleter(command_completer),
         complete_while_typing=True,
@@ -232,13 +236,11 @@ class BioPasterStreamingREPL:
             raise ValueError("session must be an object")
         self.provider_name = model_config["provider"]
         self.stream = True
-        self.multiline_mode = False
         self._current_status = None
         self._execution_view = None
 
         self.commands = [
             "/help",
-            "/multiline",
             "/permissions",
             "/resume",
             "/delete",
@@ -297,7 +299,8 @@ class BioPasterStreamingREPL:
     ## Commands
 
     - `/help` — Show available commands
-    - `/multiline` — Toggle multiline input mode
+    - `Enter` — Send message
+    - `Alt+Enter` — Insert newline
     - `/resume` — Select and resume a saved session
     - `/delete` — Select and permanently delete an inactive session, tool results and task records
     - `/new` — Save the current conversation and start a new one
@@ -310,20 +313,6 @@ class BioPasterStreamingREPL:
             ))
             return True
 
-        if command == "/multiline":
-            self.multiline_mode = not self.multiline_mode
-            status = "enabled" if self.multiline_mode else "disabled"
-
-            self.console.print(
-                f"[green]Multiline mode {status}.[/green]"
-            )
-
-            if self.multiline_mode:
-                self.console.print(
-                    "[dim]Use Esc+Enter to submit multiline input.[/dim]"
-                )
-            return True
-        
         if command == "/permissions":
             self._show_permissions()
             return True
@@ -499,7 +488,6 @@ class BioPasterStreamingREPL:
         self.session_created_at = datetime.now(timezone.utc).isoformat()
         self.session_title = None
         self.title_attempted = False
-        self.multiline_mode = False
         if sys.stdout.isatty():
             sys.stdout.write("\033[2J\033[3J\033[H")
             sys.stdout.flush()
@@ -1046,7 +1034,6 @@ class BioPasterStreamingREPL:
             Panel(
                 information,
                 title="[bold cyan] BioPaster [/bold cyan]",
-                # subtitle="[dim]/multiline · /exit[/dim]",
                 border_style="bright_black",
                 padding=(1, 2),
             )
@@ -1068,7 +1055,7 @@ class BioPasterStreamingREPL:
 
     def _read_input(self, prompt_text: str) -> str:
         if self._execution_view is None:
-            return self.prompt_session.prompt(prompt_text, multiline=self.multiline_mode)
+            return self.prompt_session.prompt(prompt_text, multiline=True)
         user_input = self._execution_view.read_next()
         self._close_execution_view()
         self.console.print(Text.assemble((prompt_text, "bold cyan"), user_input))
@@ -1079,12 +1066,12 @@ class BioPasterStreamingREPL:
         self.tool_context.cancel_event = Event()
         self.conversation.begin_task()
         self.conversation.add_user_message(user_input)
+        self.session_log.start_run(user_input)
         replay_turn = ReplayTurn(user=user_input)
         self.replay_history.turns.append(replay_turn)
         self._autosave_session(interrupted=True)
         view = ExecutionView(
             self.prompt_session,
-            multiline=self.multiline_mode,
             task_store=self.tool_context.task_store,
             render_history=self._render_resize_history,
             cancel_event=self.tool_context.cancel_event,
@@ -1098,7 +1085,6 @@ class BioPasterStreamingREPL:
             view.append_text(text)
 
         def on_event(event: ToolEvent | ResultEvent) -> None:
-            self.session_log.record("agent_event", event)
             if isinstance(event, ResultEvent):
                 view.finish(event.result, event.errors if event.is_error else [])
             else:
@@ -1144,7 +1130,6 @@ class BioPasterStreamingREPL:
             view.finish(errors=[f"Error: {e}"])
         else:
             interrupted = False
-            self.session_log.record("agent_return", result)
             self.session_log.end_run(result.subtype)
             if view.running:
                 view.finish(result.response_text, result.errors)
@@ -1254,11 +1239,7 @@ class BioPasterStreamingREPL:
     def _run_loop(self) -> None:
         while True:
             try:
-                prompt_text = (
-                    "... "
-                    if self.multiline_mode
-                    else "❯ "
-                )
+                prompt_text = "❯ "
                 user_input = self._read_input(prompt_text)
             except KeyboardInterrupt:
                 self._close_execution_view()
@@ -1266,7 +1247,6 @@ class BioPasterStreamingREPL:
                     "\n[yellow]Interrupted. "
                     "Type /exit or /quit to quit.[/yellow]"
                 )
-                self.multiline_mode = False
                 continue
             except EOFError:
                 self._close_execution_view()
@@ -1287,7 +1267,6 @@ class BioPasterStreamingREPL:
                 continue
 
             self.chat(user_input)
-            self.multiline_mode = False
 
 
     def _save_session_snapshot(self, *, interrupted: bool = False) -> None:
